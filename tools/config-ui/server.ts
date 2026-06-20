@@ -436,16 +436,21 @@ const HTML = `<!DOCTYPE html>
           </div>
         </div>
 
-        <div class="field">
-          <label for="ALLOWED_CHANNEL_IDS">Allowed Channels</label>
-          <div class="field-input-wrap">
-            <input type="text" id="ALLOWED_CHANNEL_IDS" name="ALLOWED_CHANNEL_IDS" placeholder="123456,789012" autocomplete="off" />
-          </div>
-          <span class="tooltip-icon" data-tip="comma-separated channel IDs, no spaces">ℹ️</span>
-        </div>
-        <div class="channel-name-tags" id="allowed-channel-names"></div>
+        <!-- Hidden — managed by channel cards below; included in form Save -->
+        <input type="hidden" id="ALLOWED_CHANNEL_IDS" name="ALLOWED_CHANNEL_IDS" />
 
-        <div class="field">
+        <div class="field" style="align-items: flex-start; margin-top: 4px;">
+          <label style="padding-top: 8px; font-size:0.875rem; color:#b0b0c8; min-width:160px;">Channels</label>
+          <div style="flex:1;">
+            <div id="unified-channel-list"></div>
+            <button type="button" id="btn-add-channel" style="
+              margin-top:8px; background:#4f46e5; color:#fff; border:none;
+              border-radius:5px; padding:5px 14px; font-size:0.8rem;
+              cursor:pointer; font-weight:600;">+ Add Channel</button>
+          </div>
+        </div>
+
+        <div class="field" style="margin-top:16px;">
           <label for="ERROR_CHANNEL_ID">Error Channel</label>
           <div class="field-input-wrap">
             <input type="text" id="ERROR_CHANNEL_ID" name="ERROR_CHANNEL_ID" placeholder="(optional) channel ID for error alerts" autocomplete="off" />
@@ -547,22 +552,6 @@ const HTML = `<!DOCTYPE html>
 
     </form>
 
-    <hr class="divider" />
-
-    <!-- CHANNEL SYSTEM PROMPTS -->
-    <div class="section">
-      <div class="section-title" style="justify-content: space-between;">
-        <span>Channel System Prompts</span>
-        <button type="button" id="btn-add-channel" style="
-          background: #4f46e5; color: #fff; border: none; border-radius: 5px;
-          padding: 4px 12px; font-size: 0.8rem; cursor: pointer; font-weight: 600;
-        ">+ Add Channel</button>
-      </div>
-      <p style="font-size:0.8rem; color:#7c7ca8; margin-bottom:14px;">
-        Tự động prefix prompt của từng channel với system prompt tương ứng.
-      </p>
-      <div id="channel-list"></div>
-    </div>
 
   </div>
 
@@ -627,17 +616,6 @@ const HTML = `<!DOCTYPE html>
     }
 
     function applyChannelNames() {
-      // ALLOWED_CHANNEL_IDS → chip tags
-      const allowedRaw = (document.getElementById('ALLOWED_CHANNEL_IDS')?.value || '');
-      const allowedIds = allowedRaw.split(',').map(s => s.trim()).filter(Boolean);
-      const tagsEl = document.getElementById('allowed-channel-names');
-      if (tagsEl) {
-        tagsEl.innerHTML = allowedIds.map(id => {
-          const name = channelNameCache[id];
-          return name ? \`<span class="channel-name-tag">#\${name}</span>\` : '';
-        }).join('');
-      }
-
       // ERROR_CHANNEL_ID → single hint
       const errorId = (document.getElementById('ERROR_CHANNEL_ID')?.value || '').trim();
       const errorEl = document.getElementById('error-channel-name');
@@ -646,14 +624,14 @@ const HTML = `<!DOCTYPE html>
         errorEl.textContent = name ? '#' + name : '';
       }
 
-      // Channel prompt cards → name label under each ID input
+      // Channel cards → name label under each ID input
       document.querySelectorAll('.channel-card').forEach(card => {
         const idInput = card.querySelector('.channel-id-input');
         const nameEl = card.querySelector('.channel-name-label');
         if (!idInput || !nameEl) return;
         const id = idInput.value.trim();
         const name = id && channelNameCache[id];
-        nameEl.textContent = name ? '#' + name : (id ? '' : '');
+        nameEl.textContent = name ? '#' + name : '';
       });
     }
 
@@ -719,14 +697,23 @@ const HTML = `<!DOCTYPE html>
 
     loadConfig();
 
-    // ── Channel System Prompts ─────────────────────────────────────────────────
+    // ── Unified Channel Manager ────────────────────────────────────────────────
 
-    function renderChannelCard(data = { channelId: '', systemPrompt: '' }, isNew = false) {
+    /** Rebuild ALLOWED_CHANNEL_IDS hidden input from current channel cards. */
+    function syncAllowedChannelIds() {
+      const ids = [];
+      document.querySelectorAll('#unified-channel-list .channel-card').forEach(card => {
+        const id = card.querySelector('.channel-id-input')?.value.trim();
+        if (id) ids.push(id);
+      });
+      document.getElementById('ALLOWED_CHANNEL_IDS').value = ids.join(',');
+    }
+
+    function renderUnifiedChannelCard(data = { channelId: '', systemPrompt: '' }, isNew = false) {
       const card = document.createElement('div');
       card.className = 'channel-card';
       const cachedName = data.channelId && channelNameCache[data.channelId]
-        ? '#' + channelNameCache[data.channelId]
-        : '';
+        ? '#' + channelNameCache[data.channelId] : '';
       card.innerHTML = \`
         <div class="channel-id-row">
           <input type="text" placeholder="Channel ID (e.g. 123456789012345678)"
@@ -735,9 +722,9 @@ const HTML = `<!DOCTYPE html>
           <button class="btn btn-sm btn-danger btn-delete-channel">🗑️</button>
         </div>
         <div class="channel-name-label">\${cachedName}</div>
-        <textarea class="channel-prompt-input" rows="3"
-          placeholder="System prompt ví dụ: Game art style, anime aesthetic, dark fantasy"
-        >\${data.systemPrompt}</textarea>
+        <textarea class="channel-prompt-input" rows="2"
+          placeholder="System prompt (optional) — vd: Game art style, anime aesthetic"
+        >\${data.systemPrompt || ''}</textarea>
         <div class="card-actions">
           <button class="btn btn-sm btn-save btn-save-channel">💾 Save</button>
         </div>
@@ -748,15 +735,19 @@ const HTML = `<!DOCTYPE html>
         const systemPrompt = card.querySelector('.channel-prompt-input').value;
         if (!channelId) { showToast('Channel ID is required', 'error'); return; }
         try {
-          const res = await fetch('/api/channel-prompts', {
+          // 1. Save system prompt to DB (even if empty — registers the channel)
+          const r = await fetch('/api/channel-prompts', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ channelId, systemPrompt }),
           });
-          if (!res.ok) throw new Error((await res.json()).error);
-          // Make channel ID readonly after first save
+          if (!r.ok) throw new Error((await r.json()).error);
+          // 2. Lock ID and sync hidden ALLOWED_CHANNEL_IDS
           card.querySelector('.channel-id-input').readOnly = true;
-          showToast('Channel prompt saved!', 'success');
+          syncAllowedChannelIds();
+          // 3. Resolve + display name
+          await resolveAndApplyNames();
+          showToast('Channel saved!', 'success');
         } catch (err) {
           showToast('Error: ' + err.message, 'error');
         }
@@ -764,10 +755,11 @@ const HTML = `<!DOCTYPE html>
 
       card.querySelector('.btn-delete-channel').addEventListener('click', async () => {
         const channelId = card.querySelector('.channel-id-input').value.trim();
-        if (!channelId) { card.remove(); return; }
+        if (!channelId) { card.remove(); syncAllowedChannelIds(); return; }
         try {
           await fetch(\`/api/channel-prompts/\${channelId}\`, { method: 'DELETE' });
           card.remove();
+          syncAllowedChannelIds();
           showToast('Channel removed', 'success');
         } catch (err) {
           showToast('Error: ' + err.message, 'error');
@@ -777,27 +769,43 @@ const HTML = `<!DOCTYPE html>
       return card;
     }
 
-    async function loadChannelPrompts() {
+    async function loadUnifiedChannels() {
       try {
-        const res = await fetch('/api/channel-prompts');
-        const list = await res.json();
-        const container = document.getElementById('channel-list');
+        // Load saved system prompts
+        const r1 = await fetch('/api/channel-prompts');
+        const prompts = await r1.json();
+        const promptMap = Object.fromEntries(prompts.map(p => [p.channelId, p.systemPrompt]));
+
+        // Load ALLOWED_CHANNEL_IDS (may include channels without prompts)
+        const r2 = await fetch('/api/config');
+        const config = await r2.json();
+        const allowedIds = (config.ALLOWED_CHANNEL_IDS || '').split(',').map(s => s.trim()).filter(Boolean);
+
+        // Union of both sources, preserving order (allowed first)
+        const allIds = [...new Set([...allowedIds, ...prompts.map(p => p.channelId)])];
+
+        const container = document.getElementById('unified-channel-list');
         container.innerHTML = '';
-        for (const item of list) {
-          container.appendChild(renderChannelCard(item, false));
+        for (const id of allIds) {
+          container.appendChild(renderUnifiedChannelCard(
+            { channelId: id, systemPrompt: promptMap[id] || '' }, false
+          ));
         }
-        // Resolve channel names for newly rendered cards
+        // Sync hidden input
+        document.getElementById('ALLOWED_CHANNEL_IDS').value = allIds.join(',');
+        // Resolve names for all cards
         await resolveAndApplyNames();
       } catch (err) {
-        showToast('Failed to load channel prompts: ' + err.message, 'error');
+        showToast('Failed to load channels: ' + err.message, 'error');
       }
     }
 
     document.getElementById('btn-add-channel').addEventListener('click', () => {
-      document.getElementById('channel-list').appendChild(renderChannelCard({}, true));
+      document.getElementById('unified-channel-list')
+        .appendChild(renderUnifiedChannelCard({ channelId: '', systemPrompt: '' }, true));
     });
 
-    loadChannelPrompts();
+    loadUnifiedChannels();
   </script>
 </body>
 </html>`;
