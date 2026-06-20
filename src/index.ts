@@ -1,9 +1,79 @@
+import { Client, GatewayIntentBits } from 'discord.js';
+import { getConfig } from './config';
 import { initDb, cleanupExpiredSessions } from './db/schema';
+import { SessionStore } from './services/sessionStore';
+import { QueueManager } from './services/queueManager';
+import { ImageClient } from './services/imageClient';
+import { createMessageHandler } from './bot';
 
-const db = initDb('data/test.db');
-console.log('DB initialized:', db.name);
+// ─── Bootstrap ───────────────────────────────────────────────────────────────
 
-const deleted = cleanupExpiredSessions(db, 30);
-console.log('Cleaned up expired sessions:', deleted);
+const config = getConfig();
+const db = initDb('data/bot.db');
 
-db.close();
+const sessionStore = new SessionStore(
+  db,
+  config.session.historyLimit,
+  config.session.expireMinutes
+);
+const queueManager = new QueueManager(config.queue.maxPending);
+const imageClient = new ImageClient(config.cliproxy.apiUrl, config.cliproxy.apiKey);
+
+// ─── Discord client ───────────────────────────────────────────────────────────
+
+const client = new Client({
+  intents: [
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMessages,
+    GatewayIntentBits.MessageContent, // Required to read message content
+  ],
+});
+
+// ─── Event routing ───────────────────────────────────────────────────────────
+
+client.on(
+  'messageCreate',
+  createMessageHandler({
+    allowedChannelIds: config.discord.allowedChannelIds,
+    queueManager,
+    sessionStore,
+    imageClient,
+    imageModel: config.image.model,
+    imageSize: config.image.size,
+  })
+);
+
+client.once('ready', (c) => {
+  console.log(`✅ Logged in as ${c.user.tag}`);
+
+  // Periodic cleanup of expired sessions (every hour)
+  setInterval(() => {
+    const deleted = cleanupExpiredSessions(db, config.session.expireMinutes);
+    if (deleted > 0) {
+      console.log(`🧹 Cleaned up ${deleted} expired session(s)`);
+    }
+  }, 60 * 60 * 1000);
+});
+
+client.on('error', (err) => {
+  console.error('Discord client error:', err);
+});
+
+// ─── Graceful shutdown ───────────────────────────────────────────────────────
+
+function shutdown(signal: string) {
+  console.log(`\n${signal} received — shutting down...`);
+  client.destroy();
+  db.close();
+  process.exit(0);
+}
+
+process.on('SIGINT', () => shutdown('SIGINT'));
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+
+// ─── Login ───────────────────────────────────────────────────────────────────
+
+client.login(config.discord.token).catch((err) => {
+  console.error('Failed to login to Discord:', err);
+  process.exit(1);
+});
