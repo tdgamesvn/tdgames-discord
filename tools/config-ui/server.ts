@@ -376,6 +376,39 @@ const HTML = `<!DOCTYPE html>
     }
     .btn-danger { background: #dc2626; color: #fff; }
     .btn-sm { padding: 5px 12px; font-size: 0.8rem; }
+
+    /* ── Channel name resolution ────────────────────── */
+    .channel-name-tags {
+      padding-left: 172px; /* align with inputs (160px label + 12px gap) */
+      margin-top: -4px;
+      margin-bottom: 12px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      min-height: 20px;
+    }
+    .channel-name-tag {
+      font-size: 0.72rem;
+      color: #a78bfa;
+      background: #16213e;
+      border: 1px solid #2d2d4e;
+      border-radius: 12px;
+      padding: 2px 9px;
+    }
+    .channel-name-hint {
+      padding-left: 172px;
+      margin-top: -4px;
+      margin-bottom: 12px;
+      font-size: 0.75rem;
+      color: #a78bfa;
+      min-height: 18px;
+    }
+    .channel-name-label {
+      font-size: 0.72rem;
+      color: #a78bfa;
+      margin-top: 4px;
+      min-height: 16px;
+    }
   </style>
 </head>
 <body>
@@ -410,6 +443,7 @@ const HTML = `<!DOCTYPE html>
           </div>
           <span class="tooltip-icon" data-tip="comma-separated channel IDs, no spaces">ℹ️</span>
         </div>
+        <div class="channel-name-tags" id="allowed-channel-names"></div>
 
         <div class="field">
           <label for="ERROR_CHANNEL_ID">Error Channel</label>
@@ -418,6 +452,7 @@ const HTML = `<!DOCTYPE html>
           </div>
           <span class="tooltip-icon" data-tip="Bot sẽ gửi thông báo lỗi vào channel này. Để trống nếu không dùng.">ℹ️</span>
         </div>
+        <div class="channel-name-hint" id="error-channel-name"></div>
       </div>
 
       <!-- CLIPROXY -->
@@ -564,6 +599,64 @@ const HTML = `<!DOCTYPE html>
       });
     });
 
+    // ── Channel name resolution ────────────────────────────────────────────
+    // Cache: id → "#name"
+    let channelNameCache = {};
+
+    async function resolveAndApplyNames() {
+      // Collect all known IDs from config fields + channel prompt cards
+      const ids = new Set();
+      const allowedRaw = (document.getElementById('ALLOWED_CHANNEL_IDS')?.value || '');
+      allowedRaw.split(',').map(s => s.trim()).filter(Boolean).forEach(id => ids.add(id));
+      const errorId = (document.getElementById('ERROR_CHANNEL_ID')?.value || '').trim();
+      if (errorId) ids.add(errorId);
+      document.querySelectorAll('.channel-id-input').forEach(el => {
+        const v = el.value.trim();
+        if (v) ids.add(v);
+      });
+
+      if (ids.size === 0) return;
+
+      try {
+        const res = await fetch('/api/discord/channel-names?ids=' + [...ids].join(','));
+        if (!res.ok) return;
+        channelNameCache = { ...channelNameCache, ...(await res.json()) };
+      } catch { return; }
+
+      applyChannelNames();
+    }
+
+    function applyChannelNames() {
+      // ALLOWED_CHANNEL_IDS → chip tags
+      const allowedRaw = (document.getElementById('ALLOWED_CHANNEL_IDS')?.value || '');
+      const allowedIds = allowedRaw.split(',').map(s => s.trim()).filter(Boolean);
+      const tagsEl = document.getElementById('allowed-channel-names');
+      if (tagsEl) {
+        tagsEl.innerHTML = allowedIds.map(id => {
+          const name = channelNameCache[id];
+          return name ? \`<span class="channel-name-tag">#\${name}</span>\` : '';
+        }).join('');
+      }
+
+      // ERROR_CHANNEL_ID → single hint
+      const errorId = (document.getElementById('ERROR_CHANNEL_ID')?.value || '').trim();
+      const errorEl = document.getElementById('error-channel-name');
+      if (errorEl) {
+        const name = errorId && channelNameCache[errorId];
+        errorEl.textContent = name ? '#' + name : '';
+      }
+
+      // Channel prompt cards → name label under each ID input
+      document.querySelectorAll('.channel-card').forEach(card => {
+        const idInput = card.querySelector('.channel-id-input');
+        const nameEl = card.querySelector('.channel-name-label');
+        if (!idInput || !nameEl) return;
+        const id = idInput.value.trim();
+        const name = id && channelNameCache[id];
+        nameEl.textContent = name ? '#' + name : (id ? '' : '');
+      });
+    }
+
     // ── Load config ────────────────────────────────────────────────────────
     async function loadConfig() {
       try {
@@ -575,6 +668,8 @@ const HTML = `<!DOCTYPE html>
             el.value = data[key];
           }
         }
+        // Resolve names after config values are populated
+        await resolveAndApplyNames();
       } catch (err) {
         showToast('Failed to load config: ' + err.message, 'error');
       }
@@ -629,6 +724,9 @@ const HTML = `<!DOCTYPE html>
     function renderChannelCard(data = { channelId: '', systemPrompt: '' }, isNew = false) {
       const card = document.createElement('div');
       card.className = 'channel-card';
+      const cachedName = data.channelId && channelNameCache[data.channelId]
+        ? '#' + channelNameCache[data.channelId]
+        : '';
       card.innerHTML = \`
         <div class="channel-id-row">
           <input type="text" placeholder="Channel ID (e.g. 123456789012345678)"
@@ -636,6 +734,7 @@ const HTML = `<!DOCTYPE html>
                  class="channel-id-input" />
           <button class="btn btn-sm btn-danger btn-delete-channel">🗑️</button>
         </div>
+        <div class="channel-name-label">\${cachedName}</div>
         <textarea class="channel-prompt-input" rows="3"
           placeholder="System prompt ví dụ: Game art style, anime aesthetic, dark fantasy"
         >\${data.systemPrompt}</textarea>
@@ -687,6 +786,8 @@ const HTML = `<!DOCTYPE html>
         for (const item of list) {
           container.appendChild(renderChannelCard(item, false));
         }
+        // Resolve channel names for newly rendered cards
+        await resolveAndApplyNames();
       } catch (err) {
         showToast('Failed to load channel prompts: ' + err.message, 'error');
       }
@@ -787,6 +888,40 @@ app.delete('/api/channel-prompts/:id', (req: Request, res: Response) => {
     db.prepare('DELETE FROM channel_prompts WHERE channel_id = ?').run(req.params['id']);
     db.close();
     res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: String(err) });
+  }
+});
+
+// GET /api/discord/channel-names?ids=id1,id2,...
+// Resolves channel IDs → names via Discord API using the saved bot token.
+app.get('/api/discord/channel-names', async (req: Request, res: Response) => {
+  try {
+    const env = readEnv();
+    const token = env['DISCORD_TOKEN'];
+    if (!token) return void res.json({});
+
+    const raw = String(req.query['ids'] ?? '');
+    const ids = raw.split(',').map((s) => s.trim()).filter(Boolean);
+    if (ids.length === 0) return void res.json({});
+
+    const result: Record<string, string> = {};
+    await Promise.all(
+      ids.map(async (id) => {
+        try {
+          const r = await fetch(`https://discord.com/api/v10/channels/${id}`, {
+            headers: { Authorization: `Bot ${token}` },
+          });
+          if (r.ok) {
+            const data = await r.json() as { name?: string; topic?: string };
+            result[id] = data.name ?? id;
+          }
+        } catch {
+          // ignore — channel may be inaccessible
+        }
+      })
+    );
+    res.json(result);
   } catch (err) {
     res.status(500).json({ error: String(err) });
   }
