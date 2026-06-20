@@ -3,13 +3,13 @@
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>com.tdgames.discord-bot</string>
+    <string>com.tdgames.discord-config-ui</string>
 
     <key>ProgramArguments</key>
     <array>
         <string>/opt/homebrew/bin/node</string>
         <string>/Users/tdgames_mac01/Work/apps/tdgames-discord/node_modules/.bin/tsx</string>
-        <string>/Users/tdgames_mac01/Work/apps/tdgames-discord/src/index.ts</string>
+        <string>/Users/tdgames_mac01/Work/apps/tdgames-discord/tools/config-ui/server.ts</string>
     </array>
 
     <key>WorkingDirectory</key>
@@ -22,17 +22,17 @@
     <true/>
 
     <key>StandardOutPath</key>
-    <string>/Users/tdgames_mac01/Work/apps/tdgames-discord/logs/bot.log</string>
+    <string>/Users/tdgames_mac01/Work/apps/tdgames-discord/logs/config-ui.log</string>
 
     <key>StandardErrorPath</key>
-    <string>/Users/tdgames_mac01/Work/apps/tdgames-discord/logs/bot.error.log</string>
+    <string>/Users/tdgames_mac01/Work/apps/tdgames-discord/logs/config-ui.error.log</string>
 
     <key>EnvironmentVariables</key>
     <dict>
         <key>NODE_ENV</key>
         <string>production</string>
         <key>PATH</key>
-        <string>/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin</string>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
     </dict>
 </dict>
 </plist>
