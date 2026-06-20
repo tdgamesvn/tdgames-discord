@@ -16,6 +16,7 @@ export interface Config {
     token: string;
     clientId: string;
     allowedChannelIds: Set<string>;
+    errorChannelId: string | null;
   };
   cliproxy: {
     apiUrl: string;
@@ -66,6 +67,7 @@ export function loadConfig(): Config {
       token: requireEnv('DISCORD_TOKEN'),
       clientId: requireEnv('DISCORD_CLIENT_ID'),
       allowedChannelIds,
+      errorChannelId: process.env.ERROR_CHANNEL_ID?.trim() || null,
     },
     cliproxy: {
       apiUrl: requireEnv('CLIPROXY_API_URL'),

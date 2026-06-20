@@ -2,6 +2,7 @@ import { AttachmentBuilder, Message } from 'discord.js';
 import type { ImageClient } from '../services/imageClient';
 import type { SessionStore, HistoryEntry } from '../services/sessionStore';
 import type { ChannelPromptStore } from '../services/channelPromptStore';
+import type { ErrorReporter } from '../services/errorReporter';
 
 export interface ImageHandlerDeps {
   imageClient: ImageClient;
@@ -9,6 +10,7 @@ export interface ImageHandlerDeps {
   channelPromptStore: ChannelPromptStore;
   imageModel: string;
   imageSize: string;
+  errorReporter?: ErrorReporter;
 }
 
 // ─── Ratio → size mapping for gpt-image-2 ────────────────────────────────────
@@ -75,7 +77,7 @@ export async function handleImageMessage(
   message: Message,
   deps: ImageHandlerDeps
 ): Promise<void> {
-  const { imageClient, sessionStore, channelPromptStore, imageModel, imageSize } = deps;
+  const { imageClient, sessionStore, channelPromptStore, imageModel, imageSize, errorReporter } = deps;
   const userId = message.author.id;
   const channelId = message.channelId;
   const rawContent = message.content.trim();
@@ -157,6 +159,13 @@ export async function handleImageMessage(
     const msg = err instanceof Error ? err.message : 'Unknown error';
     await thinkingMsg.edit({
       content: `❌ Failed to generate image: ${msg}`,
+    });
+    // Notify error channel (no-op if errorReporter not configured)
+    await errorReporter?.report(err, {
+      source: 'imageHandler',
+      userId,
+      channelId,
+      prompt: finalPrompt.slice(0, 200),
     });
   }
 }

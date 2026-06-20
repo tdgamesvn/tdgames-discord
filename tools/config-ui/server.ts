@@ -410,6 +410,14 @@ const HTML = `<!DOCTYPE html>
           </div>
           <span class="tooltip-icon" data-tip="comma-separated channel IDs, no spaces">ℹ️</span>
         </div>
+
+        <div class="field">
+          <label for="ERROR_CHANNEL_ID">Error Channel</label>
+          <div class="field-input-wrap">
+            <input type="text" id="ERROR_CHANNEL_ID" name="ERROR_CHANNEL_ID" placeholder="(optional) channel ID for error alerts" autocomplete="off" />
+          </div>
+          <span class="tooltip-icon" data-tip="Bot sẽ gửi thông báo lỗi vào channel này. Để trống nếu không dùng.">ℹ️</span>
+        </div>
       </div>
 
       <!-- CLIPROXY -->
@@ -527,7 +535,7 @@ const HTML = `<!DOCTYPE html>
 
   <script>
     const KEYS = [
-      'DISCORD_TOKEN', 'DISCORD_CLIENT_ID', 'ALLOWED_CHANNEL_IDS',
+      'DISCORD_TOKEN', 'DISCORD_CLIENT_ID', 'ALLOWED_CHANNEL_IDS', 'ERROR_CHANNEL_ID',
       'CLIPROXY_API_URL', 'CLIPROXY_API_KEY',
       'IMAGE_MODEL', 'IMAGE_SIZE',
       'SESSION_HISTORY_LIMIT', 'SESSION_EXPIRE_MINUTES',

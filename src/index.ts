@@ -7,6 +7,7 @@ import { SessionStore } from './services/sessionStore';
 import { ChannelPromptStore } from './services/channelPromptStore';
 import { QueueManager } from './services/queueManager';
 import { ImageClient } from './services/imageClient';
+import { ErrorReporter } from './services/errorReporter';
 import { createMessageHandler } from './bot';
 
 // ─── Bootstrap ───────────────────────────────────────────────────────────────
@@ -28,6 +29,7 @@ const imageClient = new ImageClient(
   config.openai.apiUrl,
 );
 
+
 // ─── Discord client ───────────────────────────────────────────────────────────
 
 const client = new Client({
@@ -37,6 +39,12 @@ const client = new Client({
     GatewayIntentBits.MessageContent, // Required to read message content
   ],
 });
+
+// ─── Error reporter ───────────────────────────────────────────────────────────
+// Created after client so we can pass the real instance.
+// No-op when ERROR_CHANNEL_ID is not configured.
+
+const errorReporter = new ErrorReporter(client, config.discord.errorChannelId);
 
 // ─── Event routing ───────────────────────────────────────────────────────────
 
@@ -50,6 +58,7 @@ client.on(
     imageClient,
     imageModel: config.image.model,
     imageSize: config.image.size,
+    errorReporter,
   })
 );
 
@@ -72,6 +81,19 @@ client.once('ready', (c) => {
 
 client.on('error', (err) => {
   console.error('Discord client error:', err);
+  void errorReporter.report(err, { source: 'discord-client' });
+});
+
+// ─── Global error hooks ───────────────────────────────────────────────────────
+
+process.on('uncaughtException', (err) => {
+  console.error('Uncaught exception:', err);
+  void errorReporter.report(err, { source: 'uncaughtException' });
+});
+
+process.on('unhandledRejection', (reason) => {
+  console.error('Unhandled rejection:', reason);
+  void errorReporter.report(reason, { source: 'unhandledRejection' });
 });
 
 // ─── Graceful shutdown ───────────────────────────────────────────────────────

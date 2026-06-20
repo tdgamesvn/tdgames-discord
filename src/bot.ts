@@ -2,10 +2,12 @@ import { Message } from 'discord.js';
 import { handleImageMessage } from './handlers/imageHandler';
 import type { ImageHandlerDeps } from './handlers/imageHandler';
 import type { QueueManager } from './services/queueManager';
+import type { ErrorReporter } from './services/errorReporter';
 
 export interface BotDeps extends ImageHandlerDeps {
   allowedChannelIds: Set<string>;
   queueManager: QueueManager;
+  errorReporter?: ErrorReporter;
 }
 
 /**
