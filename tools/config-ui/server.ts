@@ -230,6 +230,15 @@ const HTML = `<!DOCTYPE html>
       padding-right: 36px;
     }
 
+    .field-hint {
+      padding-left: 172px; /* align with inputs */
+      margin-top: -6px;
+      margin-bottom: 10px;
+      font-size: 0.72rem;
+      color: #7c7ca8;
+      line-height: 1.4;
+    }
+
     .toggle-btn {
       position: absolute;
       right: 8px;
@@ -519,6 +528,7 @@ const HTML = `<!DOCTYPE html>
             <input type="text" id="IMAGE_MODEL" name="IMAGE_MODEL" placeholder="gpt-image-1" autocomplete="off" />
           </div>
         </div>
+        <p class="field-hint">Tên model AI dùng để sinh ảnh. Hiện tại: <strong style="color:#a78bfa">gpt-image-1</strong> (hỗ trợ edit nhiều ảnh). Thay đổi nếu CLIProxy hỗ trợ model khác.</p>
 
         <div class="field">
           <label for="IMAGE_SIZE">Size</label>
@@ -526,6 +536,7 @@ const HTML = `<!DOCTYPE html>
             <input type="text" id="IMAGE_SIZE" name="IMAGE_SIZE" placeholder="1024x1024" autocomplete="off" />
           </div>
         </div>
+        <p class="field-hint">Kích thước ảnh mặc định. Các giá trị hợp lệ: <strong style="color:#a78bfa">1024×1024</strong> (vuông) · <strong style="color:#a78bfa">1536×1024</strong> (ngang) · <strong style="color:#a78bfa">1024×1536</strong> (dọc). User có thể ghi đè bằng flag <code style="color:#a78bfa">--ratio 16:9</code> khi nhắn tin.</p>
       </div>
 
       <!-- SESSION -->
@@ -538,6 +549,7 @@ const HTML = `<!DOCTYPE html>
             <input type="number" id="SESSION_HISTORY_LIMIT" name="SESSION_HISTORY_LIMIT" min="1" />
           </div>
         </div>
+        <p class="field-hint">Số lượng ảnh tối đa bot ghi nhớ trong 1 phiên làm việc của mỗi user. Bot dùng lịch sử này để chỉnh sửa ảnh liên tiếp (edit mode). Tăng lên nếu muốn bot nhớ lâu hơn; giảm xuống để tiết kiệm bộ nhớ.</p>
 
         <div class="field">
           <label for="SESSION_EXPIRE_MINUTES">Expire (minutes)</label>
@@ -545,6 +557,7 @@ const HTML = `<!DOCTYPE html>
             <input type="number" id="SESSION_EXPIRE_MINUTES" name="SESSION_EXPIRE_MINUTES" min="1" />
           </div>
         </div>
+        <p class="field-hint">Thời gian không hoạt động trước khi session tự động xoá. Ví dụ: 60 = nếu user không nhắn tin trong 60 phút, lịch sử bị xoá và lần sau bot coi như user mới. Khuyến nghị: 30–120 phút.</p>
       </div>
 
       <!-- QUEUE -->
@@ -557,6 +570,7 @@ const HTML = `<!DOCTYPE html>
             <input type="number" id="CHANNEL_QUEUE_MAX_PENDING" name="CHANNEL_QUEUE_MAX_PENDING" min="1" />
           </div>
         </div>
+        <p class="field-hint">Số request đang chờ xử lý tối đa trong mỗi channel. Nếu vượt quá, bot tự từ chối request mới và báo "Channel is busy". Tăng nếu nhiều user cùng gửi lệnh; giảm để tránh hàng đợi quá dài. Khuyến nghị: 3–10.</p>
       </div>
 
       <!-- OPENAI FALLBACK -->
@@ -570,6 +584,7 @@ const HTML = `<!DOCTYPE html>
             <button type="button" class="toggle-btn" data-target="OPENAI_API_KEY" title="Toggle">👁</button>
           </div>
         </div>
+        <p class="field-hint">API key OpenAI dự phòng khi CLIProxy bị lỗi (5xx). Nếu để trống, bot sẽ báo lỗi thẳng cho user thay vì tự chuyển sang OpenAI. Để trống nếu không muốn dùng fallback.</p>
       </div>
 
       <hr class="divider" />
