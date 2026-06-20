@@ -24,6 +24,12 @@ export function initDb(dbPath: string = DEFAULT_DB_PATH): Database.Database {
       updated_at  INTEGER NOT NULL,
       PRIMARY KEY (user_id, channel_id)
     );
+
+    CREATE TABLE IF NOT EXISTS channel_prompts (
+      channel_id    TEXT PRIMARY KEY,
+      system_prompt TEXT NOT NULL DEFAULT '',
+      updated_at    INTEGER NOT NULL
+    );
   `);
 
   return db;

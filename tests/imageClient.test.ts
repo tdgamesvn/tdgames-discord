@@ -111,4 +111,42 @@ describe('ImageClient', () => {
       client.generate({ prompt: 'test', model: 'gpt-image-1', size: '1024x1024' })
     ).rejects.toThrow();
   });
+
+  it('falls back to OpenAI when CLIProxy returns 5xx', async () => {
+    const FALLBACK_KEY = 'openai-fallback-key';
+    const FALLBACK_URL = 'https://api.openai.com';
+    const successData = { data: [{ b64_json: Buffer.from('fallback-image').toString('base64') }] };
+
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: false, status: 500, statusText: 'Internal Server Error' })
+      .mockResolvedValueOnce({ ok: true, json: async () => successData });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const client = new ImageClient(API_URL, API_KEY, FALLBACK_KEY, FALLBACK_URL);
+    const result = await client.generate({ prompt: 'test', model: 'gpt-image-1', size: '1024x1024' });
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls[1][0]).toBe(`${FALLBACK_URL}/v1/images/generations`);
+    expect((fetchMock.mock.calls[1][1] as RequestInit).headers).toMatchObject({
+      Authorization: `Bearer ${FALLBACK_KEY}`,
+    });
+    expect(Buffer.isBuffer(result.buffer)).toBe(true);
+  });
+
+  it('does NOT fallback on 4xx errors', async () => {
+    const FALLBACK_KEY = 'openai-fallback-key';
+
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: false, status: 400, statusText: 'Bad Request' });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const client = new ImageClient(API_URL, API_KEY, FALLBACK_KEY);
+    await expect(
+      client.generate({ prompt: 'test', model: 'gpt-image-1', size: '1024x1024' })
+    ).rejects.toThrow('400');
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
 });

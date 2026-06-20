@@ -4,6 +4,7 @@ import { Client, GatewayIntentBits } from 'discord.js';
 import { getConfig } from './config';
 import { initDb, cleanupExpiredSessions } from './db/schema';
 import { SessionStore } from './services/sessionStore';
+import { ChannelPromptStore } from './services/channelPromptStore';
 import { QueueManager } from './services/queueManager';
 import { ImageClient } from './services/imageClient';
 import { createMessageHandler } from './bot';
@@ -18,8 +19,14 @@ const sessionStore = new SessionStore(
   config.session.historyLimit,
   config.session.expireMinutes
 );
+const channelPromptStore = new ChannelPromptStore(db);
 const queueManager = new QueueManager(config.queue.maxPending);
-const imageClient = new ImageClient(config.cliproxy.apiUrl, config.cliproxy.apiKey);
+const imageClient = new ImageClient(
+  config.cliproxy.apiUrl,
+  config.cliproxy.apiKey,
+  config.openai.apiKey ?? undefined,
+  config.openai.apiUrl,
+);
 
 // ─── Discord client ───────────────────────────────────────────────────────────
 
@@ -39,6 +46,7 @@ client.on(
     allowedChannelIds: config.discord.allowedChannelIds,
     queueManager,
     sessionStore,
+    channelPromptStore,
     imageClient,
     imageModel: config.image.model,
     imageSize: config.image.size,

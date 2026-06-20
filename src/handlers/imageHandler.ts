@@ -1,10 +1,12 @@
 import { AttachmentBuilder, Message } from 'discord.js';
 import type { ImageClient } from '../services/imageClient';
 import type { SessionStore, HistoryEntry } from '../services/sessionStore';
+import type { ChannelPromptStore } from '../services/channelPromptStore';
 
 export interface ImageHandlerDeps {
   imageClient: ImageClient;
   sessionStore: SessionStore;
+  channelPromptStore: ChannelPromptStore;
   imageModel: string;
   imageSize: string;
 }
@@ -73,7 +75,7 @@ export async function handleImageMessage(
   message: Message,
   deps: ImageHandlerDeps
 ): Promise<void> {
-  const { imageClient, sessionStore, imageModel, imageSize } = deps;
+  const { imageClient, sessionStore, channelPromptStore, imageModel, imageSize } = deps;
   const userId = message.author.id;
   const channelId = message.channelId;
   const rawContent = message.content.trim();
@@ -87,6 +89,10 @@ export async function handleImageMessage(
 
   // Parse --ratio flag from prompt
   const { prompt, size } = parseRatio(rawContent, imageSize);
+
+  // Get system prompt for this channel (if any)
+  const systemPrompt = channelPromptStore.get(channelId);
+  const finalPrompt = systemPrompt ? `${systemPrompt}. ${prompt}` : prompt;
 
   // ── Determine mode: edit or generate ──────────────────────────────────────
   // Priority: (1) user-uploaded attachment → (2) last bot image in session → (3) generate new
@@ -120,12 +126,12 @@ export async function handleImageMessage(
       result = await imageClient.edit({
         imageBuffer,
         imageName,
-        prompt,
+        prompt: finalPrompt,
         model: imageModel,
         size,
       });
     } else {
-      result = await imageClient.generate({ prompt, model: imageModel, size });
+      result = await imageClient.generate({ prompt: finalPrompt, model: imageModel, size });
     }
 
     // Build discord attachment

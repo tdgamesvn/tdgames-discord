@@ -2,6 +2,7 @@ import express, { Request, Response } from 'express';
 import fs from 'fs';
 import path from 'path';
 import { spawn } from 'child_process';
+import Database from 'better-sqlite3';
 
 // ── Paths ────────────────────────────────────────────────────────────────────
 
@@ -9,6 +10,18 @@ const projectRoot = path.resolve(__dirname, '../../');
 const envPath = path.join(projectRoot, '.env');
 const envExamplePath = path.join(projectRoot, '.env.example');
 const pidPath = path.join(projectRoot, 'data', 'bot.pid');
+const dbPath = path.join(projectRoot, 'data', 'bot.db');
+
+function getDb(): Database.Database {
+  const db = new Database(dbPath);
+  // Ensure table exists (idempotent)
+  db.exec(`CREATE TABLE IF NOT EXISTS channel_prompts (
+    channel_id    TEXT PRIMARY KEY,
+    system_prompt TEXT NOT NULL DEFAULT '',
+    updated_at    INTEGER NOT NULL
+  )`);
+  return db;
+}
 
 const PORT = parseInt(process.env['CONFIG_UI_PORT'] ?? '3456', 10);
 
@@ -316,6 +329,53 @@ const HTML = `<!DOCTYPE html>
 
     #toast.success { background: #059669; }
     #toast.error   { background: #dc2626; }
+
+    .channel-card {
+      background: #16213e;
+      border: 1px solid #2d2d4e;
+      border-radius: 8px;
+      padding: 14px;
+      margin-bottom: 12px;
+    }
+    .channel-card .channel-id-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 10px;
+    }
+    .channel-card .channel-id-row input {
+      flex: 1;
+      background: #1a1a2e;
+      border: 1px solid #2d2d4e;
+      border-radius: 5px;
+      color: #e0e0e0;
+      font-size: 0.875rem;
+      padding: 6px 10px;
+      outline: none;
+    }
+    .channel-card .channel-id-row input:focus { border-color: #a78bfa; }
+    .channel-card textarea {
+      width: 100%;
+      background: #1a1a2e;
+      border: 1px solid #2d2d4e;
+      border-radius: 5px;
+      color: #e0e0e0;
+      font-size: 0.875rem;
+      padding: 8px 10px;
+      outline: none;
+      resize: vertical;
+      min-height: 60px;
+      font-family: inherit;
+    }
+    .channel-card textarea:focus { border-color: #a78bfa; }
+    .channel-card .card-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+      margin-top: 10px;
+    }
+    .btn-danger { background: #dc2626; color: #fff; }
+    .btn-sm { padding: 5px 12px; font-size: 0.8rem; }
   </style>
 </head>
 <body>
@@ -422,6 +482,19 @@ const HTML = `<!DOCTYPE html>
         </div>
       </div>
 
+      <!-- OPENAI FALLBACK -->
+      <div class="section">
+        <div class="section-title">OpenAI Fallback</div>
+        <div class="field">
+          <label for="OPENAI_API_KEY">API Key</label>
+          <div class="field-input-wrap">
+            <input type="password" id="OPENAI_API_KEY" name="OPENAI_API_KEY" class="has-toggle"
+                   autocomplete="off" placeholder="sk-... (optional)" />
+            <button type="button" class="toggle-btn" data-target="OPENAI_API_KEY" title="Toggle">👁</button>
+          </div>
+        </div>
+      </div>
+
       <hr class="divider" />
 
       <div class="actions">
@@ -430,6 +503,24 @@ const HTML = `<!DOCTYPE html>
       </div>
 
     </form>
+
+    <hr class="divider" />
+
+    <!-- CHANNEL SYSTEM PROMPTS -->
+    <div class="section">
+      <div class="section-title" style="justify-content: space-between;">
+        <span>Channel System Prompts</span>
+        <button type="button" id="btn-add-channel" style="
+          background: #4f46e5; color: #fff; border: none; border-radius: 5px;
+          padding: 4px 12px; font-size: 0.8rem; cursor: pointer; font-weight: 600;
+        ">+ Add Channel</button>
+      </div>
+      <p style="font-size:0.8rem; color:#7c7ca8; margin-bottom:14px;">
+        Tự động prefix prompt của từng channel với system prompt tương ứng.
+      </p>
+      <div id="channel-list"></div>
+    </div>
+
   </div>
 
   <div id="toast"></div>
@@ -441,6 +532,7 @@ const HTML = `<!DOCTYPE html>
       'IMAGE_MODEL', 'IMAGE_SIZE',
       'SESSION_HISTORY_LIMIT', 'SESSION_EXPIRE_MINUTES',
       'CHANNEL_QUEUE_MAX_PENDING',
+      'OPENAI_API_KEY',
     ];
 
     // ── Toast ──────────────────────────────────────────────────────────────
@@ -523,6 +615,80 @@ const HTML = `<!DOCTYPE html>
     });
 
     loadConfig();
+
+    // ── Channel System Prompts ─────────────────────────────────────────────────
+
+    function renderChannelCard(data = { channelId: '', systemPrompt: '' }, isNew = false) {
+      const card = document.createElement('div');
+      card.className = 'channel-card';
+      card.innerHTML = \`
+        <div class="channel-id-row">
+          <input type="text" placeholder="Channel ID (e.g. 123456789012345678)"
+                 value="\${data.channelId}" \${isNew ? '' : 'readonly'}
+                 class="channel-id-input" />
+          <button class="btn btn-sm btn-danger btn-delete-channel">🗑️</button>
+        </div>
+        <textarea class="channel-prompt-input" rows="3"
+          placeholder="System prompt ví dụ: Game art style, anime aesthetic, dark fantasy"
+        >\${data.systemPrompt}</textarea>
+        <div class="card-actions">
+          <button class="btn btn-sm btn-save btn-save-channel">💾 Save</button>
+        </div>
+      \`;
+
+      card.querySelector('.btn-save-channel').addEventListener('click', async () => {
+        const channelId = card.querySelector('.channel-id-input').value.trim();
+        const systemPrompt = card.querySelector('.channel-prompt-input').value;
+        if (!channelId) { showToast('Channel ID is required', 'error'); return; }
+        try {
+          const res = await fetch('/api/channel-prompts', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ channelId, systemPrompt }),
+          });
+          if (!res.ok) throw new Error((await res.json()).error);
+          // Make channel ID readonly after first save
+          card.querySelector('.channel-id-input').readOnly = true;
+          showToast('Channel prompt saved!', 'success');
+        } catch (err) {
+          showToast('Error: ' + err.message, 'error');
+        }
+      });
+
+      card.querySelector('.btn-delete-channel').addEventListener('click', async () => {
+        const channelId = card.querySelector('.channel-id-input').value.trim();
+        if (!channelId) { card.remove(); return; }
+        try {
+          await fetch(\`/api/channel-prompts/\${channelId}\`, { method: 'DELETE' });
+          card.remove();
+          showToast('Channel removed', 'success');
+        } catch (err) {
+          showToast('Error: ' + err.message, 'error');
+        }
+      });
+
+      return card;
+    }
+
+    async function loadChannelPrompts() {
+      try {
+        const res = await fetch('/api/channel-prompts');
+        const list = await res.json();
+        const container = document.getElementById('channel-list');
+        container.innerHTML = '';
+        for (const item of list) {
+          container.appendChild(renderChannelCard(item, false));
+        }
+      } catch (err) {
+        showToast('Failed to load channel prompts: ' + err.message, 'error');
+      }
+    }
+
+    document.getElementById('btn-add-channel').addEventListener('click', () => {
+      document.getElementById('channel-list').appendChild(renderChannelCard({}, true));
+    });
+
+    loadChannelPrompts();
   </script>
 </body>
 </html>`;
@@ -570,6 +736,51 @@ app.post('/api/restart', (req: Request, res: Response) => {
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     res.status(500).json({ error: message });
+  }
+});
+
+// GET /api/channel-prompts
+app.get('/api/channel-prompts', (_req: Request, res: Response) => {
+  try {
+    const db = getDb();
+    const rows = db.prepare(
+      'SELECT channel_id, system_prompt FROM channel_prompts ORDER BY channel_id'
+    ).all() as Array<{ channel_id: string; system_prompt: string }>;
+    db.close();
+    res.json(rows.map(r => ({ channelId: r.channel_id, systemPrompt: r.system_prompt })));
+  } catch (err) {
+    res.status(500).json({ error: String(err) });
+  }
+});
+
+// POST /api/channel-prompts
+app.post('/api/channel-prompts', (req: Request, res: Response) => {
+  try {
+    const { channelId, systemPrompt } = req.body as { channelId: string; systemPrompt: string };
+    if (!channelId?.trim()) return void res.status(400).json({ error: 'channelId required' });
+    const db = getDb();
+    db.prepare(`INSERT INTO channel_prompts (channel_id, system_prompt, updated_at)
+      VALUES (?, ?, ?)
+      ON CONFLICT(channel_id) DO UPDATE SET
+        system_prompt = excluded.system_prompt,
+        updated_at = excluded.updated_at`
+    ).run(channelId.trim(), systemPrompt ?? '', Date.now());
+    db.close();
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: String(err) });
+  }
+});
+
+// DELETE /api/channel-prompts/:id
+app.delete('/api/channel-prompts/:id', (req: Request, res: Response) => {
+  try {
+    const db = getDb();
+    db.prepare('DELETE FROM channel_prompts WHERE channel_id = ?').run(req.params['id']);
+    db.close();
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: String(err) });
   }
 });
 

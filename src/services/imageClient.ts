@@ -25,16 +25,50 @@ interface ApiResponse {
 export class ImageClient {
   constructor(
     private readonly apiUrl: string,
-    private readonly apiKey: string
+    private readonly apiKey: string,
+    private readonly fallbackApiKey?: string,
+    private readonly fallbackApiUrl: string = 'https://api.openai.com',
   ) {}
 
   // ─── Text-to-image ──────────────────────────────────────────────────────────
 
   async generate(params: ImageGenerationParams): Promise<ImageGenerationResult> {
-    const response = await fetch(`${this.apiUrl}/v1/images/generations`, {
+    try {
+      return await this._generateRaw(this.apiUrl, this.apiKey, params);
+    } catch (err) {
+      if (this.fallbackApiKey && this._isRetryable(err)) {
+        console.warn('[ImageClient] CLIProxy failed, falling back to OpenAI:', (err as Error).message);
+        return await this._generateRaw(this.fallbackApiUrl, this.fallbackApiKey, params);
+      }
+      throw err;
+    }
+  }
+
+  // ─── Image-to-image (edit) ──────────────────────────────────────────────────
+
+  async edit(params: ImageEditParams): Promise<ImageGenerationResult> {
+    try {
+      return await this._editRaw(this.apiUrl, this.apiKey, params);
+    } catch (err) {
+      if (this.fallbackApiKey && this._isRetryable(err)) {
+        console.warn('[ImageClient] CLIProxy failed, falling back to OpenAI:', (err as Error).message);
+        return await this._editRaw(this.fallbackApiUrl, this.fallbackApiKey, params);
+      }
+      throw err;
+    }
+  }
+
+  // ─── Raw implementations ────────────────────────────────────────────────────
+
+  private async _generateRaw(
+    apiUrl: string,
+    apiKey: string,
+    params: ImageGenerationParams,
+  ): Promise<ImageGenerationResult> {
+    const response = await fetch(`${apiUrl}/v1/images/generations`, {
       method: 'POST',
       headers: {
-        Authorization: `Bearer ${this.apiKey}`,
+        Authorization: `Bearer ${apiKey}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
@@ -52,9 +86,11 @@ export class ImageClient {
     return this._parseApiResponse(await response.json() as ApiResponse);
   }
 
-  // ─── Image-to-image (edit) ──────────────────────────────────────────────────
-
-  async edit(params: ImageEditParams): Promise<ImageGenerationResult> {
+  private async _editRaw(
+    apiUrl: string,
+    apiKey: string,
+    params: ImageEditParams,
+  ): Promise<ImageGenerationResult> {
     const form = new FormData();
     form.append('image', params.imageBuffer, {
       filename: params.imageName,
@@ -65,10 +101,10 @@ export class ImageClient {
     form.append('size', params.size);
     form.append('n', '1');
 
-    const response = await fetch(`${this.apiUrl}/v1/images/edits`, {
+    const response = await fetch(`${apiUrl}/v1/images/edits`, {
       method: 'POST',
       headers: {
-        Authorization: `Bearer ${this.apiKey}`,
+        Authorization: `Bearer ${apiKey}`,
         ...form.getHeaders(),
       },
       body: form.getBuffer(),
@@ -79,6 +115,21 @@ export class ImageClient {
     }
 
     return this._parseApiResponse(await response.json() as ApiResponse);
+  }
+
+  // ─── Retryable error detection ──────────────────────────────────────────────
+
+  private _isRetryable(err: unknown): boolean {
+    // Retry on network errors or 5xx; NOT on 4xx (bad prompt, auth)
+    if (err instanceof Error) {
+      const match = err.message.match(/error (\d+):/i);
+      if (match) {
+        const status = parseInt(match[1], 10);
+        return status >= 500; // 5xx only
+      }
+      return true; // network/unknown errors → retry
+    }
+    return false;
   }
 
   // ─── Shared response parser ─────────────────────────────────────────────────

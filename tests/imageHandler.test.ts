@@ -12,6 +12,7 @@ import { handleImageMessage } from '../src/handlers/imageHandler';
 import type { ImageHandlerDeps } from '../src/handlers/imageHandler';
 import type { SessionStore } from '../src/services/sessionStore';
 import type { ImageClient } from '../src/services/imageClient';
+import type { ChannelPromptStore } from '../src/services/channelPromptStore';
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -36,9 +37,17 @@ function makeDeps(overrides: Partial<ImageHandlerDeps> = {}): ImageHandlerDeps {
     getLastImageUrl: vi.fn().mockReturnValue(null),
   } as unknown as SessionStore;
 
+  const channelPromptStore = {
+    get: vi.fn().mockReturnValue(null),
+    set: vi.fn(),
+    delete: vi.fn(),
+    list: vi.fn().mockReturnValue([]),
+  } as unknown as ChannelPromptStore;
+
   return {
     imageClient,
     sessionStore,
+    channelPromptStore,
     imageModel: 'gpt-image-1',
     imageSize: '1024x1024',
     ...overrides,
@@ -191,5 +200,23 @@ describe('handleImageMessage', () => {
 
     expect(deps.sessionStore.delete).toHaveBeenCalledWith('user-123', 'chan-456');
     expect(deps.imageClient.generate).not.toHaveBeenCalled();
+  });
+
+  it('prepends system prompt to generate call when channelPromptStore returns a prompt', async () => {
+    const channelPromptStore = {
+      get: vi.fn().mockReturnValue('photorealistic style'),
+      set: vi.fn(),
+      delete: vi.fn(),
+      list: vi.fn().mockReturnValue([]),
+    } as unknown as ChannelPromptStore;
+
+    const deps = makeDeps({ channelPromptStore });
+    const message = makeMessage('a mountain lake');
+
+    await handleImageMessage(message as any, deps);
+
+    expect(deps.imageClient.generate).toHaveBeenCalledWith(
+      expect.objectContaining({ prompt: 'photorealistic style. a mountain lake' })
+    );
   });
 });

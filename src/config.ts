@@ -21,6 +21,10 @@ export interface Config {
     apiUrl: string;
     apiKey: string;
   };
+  openai: {
+    apiKey: string | null;
+    apiUrl: string;
+  };
   image: {
     model: string;
     size: string;
@@ -66,6 +70,10 @@ export function loadConfig(): Config {
     cliproxy: {
       apiUrl: requireEnv('CLIPROXY_API_URL'),
       apiKey: requireEnv('CLIPROXY_API_KEY'),
+    },
+    openai: {
+      apiKey: process.env.OPENAI_API_KEY ?? null,
+      apiUrl: process.env.OPENAI_API_URL ?? 'https://api.openai.com',
     },
     image: {
       model: process.env.IMAGE_MODEL ?? 'gpt-image-1',
