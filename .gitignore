@@ -35,6 +35,7 @@ Thumbs.db
 
 # Runtime
 *.pid
+data/bot.pid
 data/*.db
 data/*.db-journal
 data/*.db-wal

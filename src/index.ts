@@ -1,3 +1,5 @@
+import * as fs from 'fs';
+import * as path from 'path';
 import { Client, GatewayIntentBits } from 'discord.js';
 import { getConfig } from './config';
 import { initDb, cleanupExpiredSessions } from './db/schema';
@@ -46,6 +48,11 @@ client.on(
 client.once('ready', (c) => {
   console.log(`✅ Logged in as ${c.user.tag}`);
 
+  const dataDir = path.join(process.cwd(), 'data');
+  fs.mkdirSync(dataDir, { recursive: true });
+  fs.writeFileSync(path.join(dataDir, 'bot.pid'), String(process.pid));
+  console.log(`📝 PID ${process.pid} written to data/bot.pid`);
+
   // Periodic cleanup of expired sessions (every hour)
   setInterval(() => {
     const deleted = cleanupExpiredSessions(db, config.session.expireMinutes);
@@ -65,6 +72,7 @@ function shutdown(signal: string) {
   console.log(`\n${signal} received — shutting down...`);
   client.destroy();
   db.close();
+  try { fs.unlinkSync(path.join(process.cwd(), 'data', 'bot.pid')); } catch {}
   process.exit(0);
 }
 
