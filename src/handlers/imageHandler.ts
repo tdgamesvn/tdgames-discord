@@ -49,6 +49,24 @@ function parseRatio(raw: string, defaultSize: string): { prompt: string; size: s
   return { prompt, size };
 }
 
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
+/** Download a URL and return its buffer. */
+async function fetchBuffer(url: string): Promise<Buffer> {
+  const resp = await fetch(url);
+  if (!resp.ok) throw new Error(`Failed to download image: ${resp.status}`);
+  return Buffer.from(await resp.arrayBuffer());
+}
+
+/** Get last bot-generated imageUrl from session history. */
+function lastBotImageUrl(history: HistoryEntry[]): string | null {
+  for (let i = history.length - 1; i >= 0; i--) {
+    const entry = history[i];
+    if (entry.role === 'bot' && entry.imageUrl) return entry.imageUrl;
+  }
+  return null;
+}
+
 // ─── Handler ─────────────────────────────────────────────────────────────────
 
 export async function handleImageMessage(
@@ -70,21 +88,50 @@ export async function handleImageMessage(
   // Parse --ratio flag from prompt
   const { prompt, size } = parseRatio(rawContent, imageSize);
 
+  // ── Determine mode: edit or generate ──────────────────────────────────────
+  // Priority: (1) user-uploaded attachment → (2) last bot image in session → (3) generate new
+
+  const imageAttachment = message.attachments.find(
+    (a) => a.contentType?.startsWith('image/') ?? false
+  );
+
+  const session = sessionStore.get(userId, channelId);
+  const sessionImageUrl = session ? lastBotImageUrl(session.history) : null;
+
+  const isEditMode = Boolean(imageAttachment || sessionImageUrl);
+  const modeLabel = imageAttachment
+    ? '🖼️ Editing your image...'
+    : sessionImageUrl
+      ? '🖼️ Refining previous image...'
+      : '⏳ Generating your image...';
+
   // Send thinking placeholder
-  const thinkingMsg = await message.reply('⏳ Generating your image...');
+  const thinkingMsg = await message.reply(modeLabel);
 
   try {
-    // Call image API
-    const result = await imageClient.generate({
-      prompt,
-      model: imageModel,
-      size,
-    });
+    let result;
+
+    if (isEditMode) {
+      // Download source image
+      const sourceUrl = imageAttachment?.url ?? sessionImageUrl!;
+      const imageName = imageAttachment?.name ?? 'image.png';
+      const imageBuffer = await fetchBuffer(sourceUrl);
+
+      result = await imageClient.edit({
+        imageBuffer,
+        imageName,
+        prompt,
+        model: imageModel,
+        size,
+      });
+    } else {
+      result = await imageClient.generate({ prompt, model: imageModel, size });
+    }
 
     // Build discord attachment
     const attachment = new AttachmentBuilder(result.buffer, { name: 'image.png' });
 
-    // Edit placeholder: clear ⏳ text and attach image
+    // Edit placeholder: clear status text and attach image
     const sentMsg = await thinkingMsg.edit({
       content: `✅ Done! \`${size}\``,
       files: [attachment],

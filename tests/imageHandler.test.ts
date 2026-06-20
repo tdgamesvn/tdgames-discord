@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // Mock AttachmentBuilder from discord.js before importing handler
 vi.mock('discord.js', () => ({
@@ -15,9 +15,18 @@ import type { ImageClient } from '../src/services/imageClient';
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
+// Stub fetch to return a fake image buffer (used when handler downloads an image)
+function stubFetchImage() {
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+    ok: true,
+    arrayBuffer: async () => Buffer.from('fake-downloaded-img').buffer,
+  }));
+}
+
 function makeDeps(overrides: Partial<ImageHandlerDeps> = {}): ImageHandlerDeps {
   const imageClient = {
     generate: vi.fn().mockResolvedValue({ buffer: Buffer.from('fake-img') }),
+    edit: vi.fn().mockResolvedValue({ buffer: Buffer.from('fake-edited-img') }),
   } as unknown as ImageClient;
 
   const sessionStore = {
@@ -36,17 +45,23 @@ function makeDeps(overrides: Partial<ImageHandlerDeps> = {}): ImageHandlerDeps {
   };
 }
 
-function makeMessage(content: string) {
+function makeMessage(content: string, withAttachment = false) {
   const sentMsg = {
+    // attachments on the bot's reply (for CDN URL extraction)
     attachments: { first: () => ({ url: 'https://cdn.discordapp.com/image.png' }) },
   };
   const thinkingMsg = {
     edit: vi.fn().mockResolvedValue(sentMsg),
   };
+  // Simulate Discord Collection.find() on the incoming message's attachments
+  const incomingAttachment = withAttachment
+    ? { url: 'https://cdn.discordapp.com/uploaded.png', name: 'uploaded.png', contentType: 'image/png' }
+    : undefined;
   return {
     content,
     author: { id: 'user-123', bot: false },
     channelId: 'chan-456',
+    attachments: { find: (_fn: (a: typeof incomingAttachment) => boolean) => incomingAttachment },
     reply: vi.fn().mockResolvedValue(thinkingMsg),
     _thinkingMsg: thinkingMsg,
   };
@@ -57,6 +72,10 @@ function makeMessage(content: string) {
 describe('handleImageMessage', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
   });
 
   it('calls imageClient.generate with the message content as prompt', async () => {
@@ -101,6 +120,9 @@ describe('handleImageMessage', () => {
   });
 
   it('appends to existing session history instead of overwriting', async () => {
+    // Session has a previous bot image → handler will use edit mode → needs fetch for download
+    stubFetchImage();
+
     const existingHistory = [
       { role: 'user' as const, prompt: 'old prompt' },
       { role: 'bot' as const, prompt: 'old prompt', imageUrl: 'https://old.url/img.png' },
@@ -109,7 +131,6 @@ describe('handleImageMessage', () => {
       get: vi.fn().mockReturnValue({ userId: 'user-123', channelId: 'chan-456', history: existingHistory, updatedAt: Date.now() }),
       upsert: vi.fn(),
       delete: vi.fn(),
-      getLastImageUrl: vi.fn().mockReturnValue(null),
     } as unknown as SessionStore;
 
     const deps = makeDeps({ sessionStore });
@@ -121,6 +142,19 @@ describe('handleImageMessage', () => {
     expect(savedHistory).toHaveLength(4);
     expect(savedHistory[0]).toEqual({ role: 'user', prompt: 'old prompt' });
     expect(savedHistory[2]).toEqual({ role: 'user', prompt: 'new prompt' });
+  });
+
+  it('calls imageClient.edit when message has an image attachment', async () => {
+    stubFetchImage();
+    const deps = makeDeps();
+    const message = makeMessage('change pose', true); // withAttachment = true
+
+    await handleImageMessage(message as any, deps);
+
+    expect(deps.imageClient.edit).toHaveBeenCalledWith(
+      expect.objectContaining({ prompt: 'change pose' })
+    );
+    expect(deps.imageClient.generate).not.toHaveBeenCalled();
   });
 
   it('edits the thinking message with an error notice when generate fails', async () => {
