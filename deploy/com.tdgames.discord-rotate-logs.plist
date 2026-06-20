@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.tdgames.discord-rotate-logs</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/opt/homebrew/bin/node</string>
+        <string>/Users/tdgames_mac01/Work/apps/tdgames-discord/node_modules/.bin/tsx</string>
+        <string>/Users/tdgames_mac01/Work/apps/tdgames-discord/scripts/rotate-logs.ts</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/tdgames_mac01/Work/apps/tdgames-discord</string>
+
+    <!-- Chạy mỗi ngày lúc 03:00 AM -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>3</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>/Users/tdgames_mac01/Work/apps/tdgames-discord/logs/rotate-logs.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/Users/tdgames_mac01/Work/apps/tdgames-discord/logs/rotate-logs.error.log</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>NODE_ENV</key>
+        <string>production</string>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    </dict>
+</dict>
+</plist>
