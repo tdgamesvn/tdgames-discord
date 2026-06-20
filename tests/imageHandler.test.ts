@@ -54,7 +54,9 @@ function makeDeps(overrides: Partial<ImageHandlerDeps> = {}): ImageHandlerDeps {
   };
 }
 
-function makeMessage(content: string, withAttachment = false) {
+type FakeAttachment = { url: string; name: string; contentType: string };
+
+function makeMessage(content: string, attachments: FakeAttachment[] = []) {
   const sentMsg = {
     // attachments on the bot's reply (for CDN URL extraction)
     attachments: { first: () => ({ url: 'https://cdn.discordapp.com/image.png' }) },
@@ -62,19 +64,22 @@ function makeMessage(content: string, withAttachment = false) {
   const thinkingMsg = {
     edit: vi.fn().mockResolvedValue(sentMsg),
   };
-  // Simulate Discord Collection.find() on the incoming message's attachments
-  const incomingAttachment = withAttachment
-    ? { url: 'https://cdn.discordapp.com/uploaded.png', name: 'uploaded.png', contentType: 'image/png' }
-    : undefined;
   return {
     content,
     author: { id: 'user-123', bot: false },
     channelId: 'chan-456',
-    attachments: { find: (_fn: (a: typeof incomingAttachment) => boolean) => incomingAttachment },
+    // Simulate Discord Collection.values() — handler spreads this then filters
+    attachments: { values: () => attachments[Symbol.iterator]() },
     reply: vi.fn().mockResolvedValue(thinkingMsg),
     _thinkingMsg: thinkingMsg,
   };
 }
+
+const IMG = (n = 1): FakeAttachment => ({
+  url: `https://cdn.discordapp.com/uploaded${n}.png`,
+  name: `uploaded${n}.png`,
+  contentType: 'image/png',
+});
 
 // ─── Tests ──────────────────────────────────────────────────────────────────
 
@@ -153,17 +158,50 @@ describe('handleImageMessage', () => {
     expect(savedHistory[2]).toEqual({ role: 'user', prompt: 'new prompt' });
   });
 
-  it('calls imageClient.edit when message has an image attachment', async () => {
+  it('calls imageClient.edit when message has a single image attachment', async () => {
     stubFetchImage();
     const deps = makeDeps();
-    const message = makeMessage('change pose', true); // withAttachment = true
+    const message = makeMessage('change pose', [IMG()]);
 
     await handleImageMessage(message as any, deps);
 
     expect(deps.imageClient.edit).toHaveBeenCalledWith(
-      expect.objectContaining({ prompt: 'change pose' })
+      expect.objectContaining({
+        prompt: 'change pose',
+        images: [expect.objectContaining({ name: 'uploaded1.png' })],
+      })
     );
     expect(deps.imageClient.generate).not.toHaveBeenCalled();
+  });
+
+  it('passes ALL images when user uploads multiple attachments', async () => {
+    stubFetchImage();
+    const deps = makeDeps();
+    const message = makeMessage('blend these two', [IMG(1), IMG(2)]);
+
+    await handleImageMessage(message as any, deps);
+
+    expect(deps.imageClient.edit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        prompt: 'blend these two',
+        images: expect.arrayContaining([
+          expect.objectContaining({ name: 'uploaded1.png' }),
+          expect.objectContaining({ name: 'uploaded2.png' }),
+        ]),
+      })
+    );
+    const call = (deps.imageClient.edit as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(call.images).toHaveLength(2);
+  });
+
+  it('shows multi-image label when 2+ attachments', async () => {
+    stubFetchImage();
+    const deps = makeDeps();
+    const message = makeMessage('style transfer', [IMG(1), IMG(2), IMG(3)]);
+
+    await handleImageMessage(message as any, deps);
+
+    expect(message.reply).toHaveBeenCalledWith(expect.stringContaining('3 images'));
   });
 
   it('edits the thinking message with an error notice when generate fails', async () => {

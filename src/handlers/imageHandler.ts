@@ -97,18 +97,23 @@ export async function handleImageMessage(
   const finalPrompt = systemPrompt ? `${systemPrompt}. ${prompt}` : prompt;
 
   // ── Determine mode: edit or generate ──────────────────────────────────────
-  // Priority: (1) user-uploaded attachment → (2) last bot image in session → (3) generate new
+  // Priority: (1) user-uploaded attachments (all of them) → (2) last bot image in session → (3) generate new
 
-  const imageAttachment = message.attachments.find(
+  // Collect ALL image attachments from the message (multi-image support)
+  const imageAttachments = [...message.attachments.values()].filter(
     (a) => a.contentType?.startsWith('image/') ?? false
   );
 
   const session = sessionStore.get(userId, channelId);
   const sessionImageUrl = session ? lastBotImageUrl(session.history) : null;
 
-  const isEditMode = Boolean(imageAttachment || sessionImageUrl);
-  const modeLabel = imageAttachment
-    ? '🖼️ Editing your image...'
+  const hasUploads = imageAttachments.length > 0;
+  const isEditMode = hasUploads || Boolean(sessionImageUrl);
+
+  const modeLabel = hasUploads
+    ? imageAttachments.length > 1
+      ? `🖼️ Editing ${imageAttachments.length} images...`
+      : '🖼️ Editing your image...'
     : sessionImageUrl
       ? '🖼️ Refining previous image...'
       : '⏳ Generating your image...';
@@ -120,14 +125,23 @@ export async function handleImageMessage(
     let result;
 
     if (isEditMode) {
-      // Download source image
-      const sourceUrl = imageAttachment?.url ?? sessionImageUrl!;
-      const imageName = imageAttachment?.name ?? 'image.png';
-      const imageBuffer = await fetchBuffer(sourceUrl);
+      let images: Array<{ buffer: Buffer; name: string }>;
+
+      if (hasUploads) {
+        // Download ALL uploaded images in parallel
+        images = await Promise.all(
+          imageAttachments.map(async (a) => ({
+            buffer: await fetchBuffer(a.url),
+            name: a.name ?? 'image.png',
+          }))
+        );
+      } else {
+        // Fall back to last bot-generated image from session
+        images = [{ buffer: await fetchBuffer(sessionImageUrl!), name: 'image.png' }];
+      }
 
       result = await imageClient.edit({
-        imageBuffer,
-        imageName,
+        images,
         prompt: finalPrompt,
         model: imageModel,
         size,

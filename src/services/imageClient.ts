@@ -6,9 +6,14 @@ export interface ImageGenerationParams {
   size: string;
 }
 
+export interface ImageEditItem {
+  buffer: Buffer;
+  name: string;
+}
+
 export interface ImageEditParams {
-  imageBuffer: Buffer;
-  imageName: string;
+  /** One or more reference images (multi-image edit supported by gpt-image-1). */
+  images: ImageEditItem[];
   prompt: string;
   model: string;
   size: string;
@@ -92,10 +97,13 @@ export class ImageClient {
     params: ImageEditParams,
   ): Promise<ImageGenerationResult> {
     const form = new FormData();
-    form.append('image', params.imageBuffer, {
-      filename: params.imageName,
-      contentType: 'image/png',
-    });
+    // Append each image as image[] — gpt-image-1 supports multi-image edits
+    for (const img of params.images) {
+      form.append('image[]', img.buffer, {
+        filename: img.name,
+        contentType: 'image/png',
+      });
+    }
     form.append('prompt', params.prompt);
     form.append('model', params.model);
     form.append('size', params.size);
