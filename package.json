@@ -1,0 +1,13 @@
+{
+  "name": "tdgames-discord",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "gitnexus:analyze": "gitnexus analyze",
+    "gitnexus:status": "gitnexus status",
+    "gitnexus:impact": "gitnexus impact",
+    "gitnexus:context": "gitnexus context",
+    "gitnexus:query": "gitnexus query"
+  },
+  "devDependencies": {}
+}
