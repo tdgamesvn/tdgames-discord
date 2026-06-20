@@ -35,8 +35,9 @@ export interface Config {
 }
 
 export function loadConfig(): Config {
-  // Load .env file if it exists (dev mode)
+  // Load .env file if it exists (dev mode — skip in test environment)
   try {
+    if (process.env.NODE_ENV === 'test') throw new Error('skip');
     const envContent = require('fs').readFileSync('.env', 'utf8');
     for (const line of envContent.split('\n')) {
       const trimmed = line.trim();
