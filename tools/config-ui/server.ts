@@ -304,6 +304,35 @@ const HTML = `<!DOCTYPE html>
       color: #fff;
     }
 
+    .btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none !important; }
+
+    /* ── Bot status indicator ───────────────────── */
+    #bot-status {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      margin-right: auto;
+    }
+    #status-label {
+      font-size: 0.8rem;
+      color: #b0b0c8;
+    }
+    .status-dot {
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      background: #6b7280;
+      flex-shrink: 0;
+      transition: background 0.3s;
+    }
+    .status-dot.online      { background: #10b981; box-shadow: 0 0 6px #10b981; }
+    .status-dot.offline     { background: #6b7280; }
+    .status-dot.restarting  { background: #f59e0b; animation: blink 0.8s ease-in-out infinite; }
+    @keyframes blink {
+      0%, 100% { opacity: 1; }
+      50%       { opacity: 0.3; }
+    }
+
     /* Toast */
     #toast {
       position: fixed;
@@ -546,6 +575,10 @@ const HTML = `<!DOCTYPE html>
       <hr class="divider" />
 
       <div class="actions">
+        <div id="bot-status">
+          <span class="status-dot" id="status-dot"></span>
+          <span id="status-label">Checking...</span>
+        </div>
         <button type="button" class="btn btn-save" id="btn-save">💾 Save Config</button>
         <button type="button" class="btn btn-restart" id="btn-restart">🔄 Save &amp; Restart Bot</button>
       </div>
@@ -679,9 +712,44 @@ const HTML = `<!DOCTYPE html>
       }
     });
 
+    // ── Bot status ─────────────────────────────────────────────────────────
+    function updateStatusUI(status) {
+      const dot = document.getElementById('status-dot');
+      const label = document.getElementById('status-label');
+      if (!dot || !label) return;
+      dot.className = 'status-dot ' + status;
+      label.textContent = status === 'online' ? 'Bot Online'
+                        : status === 'restarting' ? 'Restarting...'
+                        : 'Bot Offline';
+      label.style.color = status === 'online' ? '#10b981'
+                        : status === 'restarting' ? '#f59e0b'
+                        : '#6b7280';
+    }
+
+    async function checkBotStatus() {
+      try {
+        const res = await fetch('/api/bot-status');
+        const data = await res.json();
+        updateStatusUI(data.status);
+        return data.status;
+      } catch {
+        updateStatusUI('offline');
+        return 'offline';
+      }
+    }
+
+    // Check on load + every 10s
+    checkBotStatus();
+    setInterval(checkBotStatus, 10000);
+
     // ── Save & Restart ─────────────────────────────────────────────────────
     document.getElementById('btn-restart').addEventListener('click', async () => {
+      const btn = document.getElementById('btn-restart');
       try {
+        btn.disabled = true;
+        btn.textContent = '⏳ Restarting...';
+        updateStatusUI('restarting');
+
         const res = await fetch('/api/restart', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -689,9 +757,31 @@ const HTML = `<!DOCTYPE html>
         });
         const json = await res.json();
         if (!res.ok) throw new Error(json.error || 'Restart failed');
-        showToast('Bot restarted!', 'success');
+
+        // Poll until bot comes back online (max 30s)
+        let attempts = 0;
+        const poll = async () => {
+          attempts++;
+          const status = await checkBotStatus();
+          if (status === 'online') {
+            showToast('✅ Bot restarted successfully!', 'success');
+            btn.disabled = false;
+            btn.innerHTML = '🔄 Save &amp; Restart Bot';
+          } else if (attempts < 30) {
+            setTimeout(poll, 1000);
+          } else {
+            showToast('⚠️ Bot is taking too long to start', 'error');
+            btn.disabled = false;
+            btn.innerHTML = '🔄 Save &amp; Restart Bot';
+          }
+        };
+        setTimeout(poll, 1500); // wait 1.5s before first check
+
       } catch (err) {
         showToast('Error: ' + err.message, 'error');
+        btn.disabled = false;
+        btn.innerHTML = '🔄 Save &amp; Restart Bot';
+        updateStatusUI('offline');
       }
     });
 
@@ -898,6 +988,23 @@ app.delete('/api/channel-prompts/:id', (req: Request, res: Response) => {
     res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: String(err) });
+  }
+});
+
+// GET /api/bot-status — check if bot process is running
+app.get('/api/bot-status', (_req: Request, res: Response) => {
+  try {
+    if (!fs.existsSync(pidPath)) return void res.json({ status: 'offline' });
+    const pid = parseInt(fs.readFileSync(pidPath, 'utf-8').trim(), 10);
+    if (isNaN(pid)) return void res.json({ status: 'offline' });
+    try {
+      process.kill(pid, 0); // signal 0 = existence check only
+      res.json({ status: 'online', pid });
+    } catch {
+      res.json({ status: 'offline' });
+    }
+  } catch (err) {
+    res.json({ status: 'offline' });
   }
 });
 
