@@ -30,6 +30,12 @@ export function initDb(dbPath: string = DEFAULT_DB_PATH): Database.Database {
       system_prompt TEXT NOT NULL DEFAULT '',
       updated_at    INTEGER NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS image_stats (
+      date      TEXT PRIMARY KEY,   -- YYYY-MM-DD local time
+      generates INTEGER NOT NULL DEFAULT 0,
+      edits     INTEGER NOT NULL DEFAULT 0
+    );
   `);
 
   return db;

@@ -3,6 +3,7 @@ import type { ImageClient } from '../services/imageClient';
 import type { SessionStore, HistoryEntry } from '../services/sessionStore';
 import type { ChannelPromptStore } from '../services/channelPromptStore';
 import type { ErrorReporter } from '../services/errorReporter';
+import type { StatsStore } from '../services/statsStore';
 
 export interface ImageHandlerDeps {
   imageClient: ImageClient;
@@ -11,6 +12,7 @@ export interface ImageHandlerDeps {
   imageModel: string;
   imageSize: string;
   errorReporter?: ErrorReporter;
+  statsStore?: StatsStore;
 }
 
 // ─── Ratio → size mapping for gpt-image-2 ────────────────────────────────────
@@ -77,7 +79,7 @@ export async function handleImageMessage(
   message: Message,
   deps: ImageHandlerDeps
 ): Promise<void> {
-  const { imageClient, sessionStore, channelPromptStore, imageModel, imageSize, errorReporter } = deps;
+  const { imageClient, sessionStore, channelPromptStore, imageModel, imageSize, errorReporter, statsStore } = deps;
   const userId = message.author.id;
   const channelId = message.channelId;
   const rawContent = message.content.trim();
@@ -169,6 +171,9 @@ export async function handleImageMessage(
     history.push({ role: 'bot', prompt, imageUrl });
 
     sessionStore.upsert(userId, channelId, history);
+
+    // Track usage stats
+    statsStore?.increment(isEditMode ? 'edit' : 'generate');
   } catch (err) {
     const msg = err instanceof Error ? err.message : 'Unknown error';
     await thinkingMsg.edit({

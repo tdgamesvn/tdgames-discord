@@ -447,11 +447,78 @@ const HTML = `<!DOCTYPE html>
       margin-top: 4px;
       min-height: 16px;
     }
+
+    /* ── Select (dark theme) ────────────────────── */
+    .field-input-wrap select {
+      width: 100%;
+      background: #16213e;
+      border: 1px solid #2d2d4e;
+      border-radius: 6px;
+      color: #e0e0e0;
+      font-size: 0.875rem;
+      padding: 8px 12px;
+      outline: none;
+      cursor: pointer;
+      transition: border-color 0.15s;
+      appearance: none;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%237c7ca8' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
+      background-repeat: no-repeat;
+      background-position: right 10px center;
+      padding-right: 30px;
+    }
+    .field-input-wrap select:focus { border-color: #a78bfa; }
+
+    /* ── Test button ────────────────────────────── */
+    .btn-test {
+      padding: 7px 12px;
+      font-size: 0.78rem;
+      font-weight: 600;
+      border: none;
+      border-radius: 5px;
+      cursor: pointer;
+      background: #2d2d4e;
+      color: #b0b0c8;
+      white-space: nowrap;
+      transition: background 0.15s;
+    }
+    .btn-test:hover { background: #3d3d6e; }
+    .btn-test.ok    { background: #064e3b; color: #6ee7b7; }
+    .btn-test.fail  { background: #7f1d1d; color: #fca5a5; }
+
+    /* ── Log viewer ─────────────────────────────── */
+    #log-content {
+      background: #0d1117;
+      border: 1px solid #2d2d4e;
+      border-radius: 6px;
+      padding: 12px;
+      font-family: 'SF Mono', 'Fira Code', monospace;
+      font-size: 0.72rem;
+      line-height: 1.5;
+      color: #8b8bae;
+      max-height: 320px;
+      overflow-y: auto;
+      white-space: pre-wrap;
+      word-break: break-all;
+      margin-top: 10px;
+    }
+    #log-content:empty::before { content: '(trống)'; color: #4a4a6a; }
   </style>
 </head>
 <body>
   <div class="container">
     <div class="header">🎮 TDGames Discord Bot — Config</div>
+
+    <!-- STATS BAR -->
+    <div style="display:flex; margin-bottom:24px; background:#16213e; border:1px solid #2d2d4e; border-radius:8px; overflow:hidden;">
+      <div style="flex:1; padding:12px 16px; border-right:1px solid #2d2d4e;">
+        <div style="font-size:0.68rem; color:#7c7ca8; text-transform:uppercase; letter-spacing:0.1em; margin-bottom:4px;">Hôm nay</div>
+        <div id="stats-today" style="font-size:1rem; font-weight:700; color:#a78bfa;">—</div>
+      </div>
+      <div style="flex:1; padding:12px 16px;">
+        <div style="font-size:0.68rem; color:#7c7ca8; text-transform:uppercase; letter-spacing:0.1em; margin-bottom:4px;">7 ngày qua</div>
+        <div id="stats-week" style="font-size:1rem; font-weight:700; color:#a78bfa;">—</div>
+      </div>
+    </div>
 
     <form id="config-form">
 
@@ -507,6 +574,7 @@ const HTML = `<!DOCTYPE html>
           <div class="field-input-wrap">
             <input type="text" id="CLIPROXY_API_URL" name="CLIPROXY_API_URL" placeholder="http://localhost:8317" autocomplete="off" />
           </div>
+          <button type="button" class="btn-test" id="btn-test-cliproxy">Test</button>
         </div>
 
         <div class="field">
@@ -533,10 +601,14 @@ const HTML = `<!DOCTYPE html>
         <div class="field">
           <label for="IMAGE_SIZE">Size</label>
           <div class="field-input-wrap">
-            <input type="text" id="IMAGE_SIZE" name="IMAGE_SIZE" placeholder="1024x1024" autocomplete="off" />
+            <select id="IMAGE_SIZE" name="IMAGE_SIZE">
+              <option value="1024x1024">1024 × 1024 — Vuông (1:1)</option>
+              <option value="1536x1024">1536 × 1024 — Ngang (3:2)</option>
+              <option value="1024x1536">1024 × 1536 — Dọc (2:3)</option>
+            </select>
           </div>
         </div>
-        <p class="field-hint">Kích thước ảnh mặc định. Các giá trị hợp lệ: <strong style="color:#a78bfa">1024×1024</strong> (vuông) · <strong style="color:#a78bfa">1536×1024</strong> (ngang) · <strong style="color:#a78bfa">1024×1536</strong> (dọc). User có thể ghi đè bằng flag <code style="color:#a78bfa">--ratio 16:9</code> khi nhắn tin.</p>
+        <p class="field-hint">Kích thước ảnh mặc định. User có thể ghi đè bằng flag <code style="color:#a78bfa">--ratio 16:9</code> khi nhắn tin.</p>
       </div>
 
       <!-- SESSION -->
@@ -600,6 +672,24 @@ const HTML = `<!DOCTYPE html>
 
     </form>
 
+    <hr class="divider" />
+
+    <!-- LOG VIEWER -->
+    <div class="section">
+      <div class="section-title" style="justify-content:space-between;">
+        <span>Logs</span>
+        <div style="display:flex; gap:8px; align-items:center;">
+          <select id="log-file-sel" style="background:#16213e; border:1px solid #2d2d4e; color:#e0e0e0; border-radius:4px; padding:4px 8px; font-size:0.78rem; cursor:pointer;">
+            <option value="bot">bot.log</option>
+            <option value="bot-error">bot.error.log</option>
+            <option value="config-ui">config-ui.log</option>
+            <option value="config-ui-error">config-ui.error.log</option>
+          </select>
+          <button id="btn-refresh-logs" style="background:#2d2d4e; color:#b0b0c8; border:none; border-radius:4px; padding:4px 10px; font-size:0.78rem; cursor:pointer; font-weight:600;">↻ Refresh</button>
+        </div>
+      </div>
+      <pre id="log-content"></pre>
+    </div>
 
   </div>
 
@@ -801,6 +891,69 @@ const HTML = `<!DOCTYPE html>
     });
 
     loadConfig();
+
+    // ── Usage Stats ────────────────────────────────────────────────────────────
+    async function loadStats() {
+      try {
+        const res = await fetch('/api/stats');
+        if (!res.ok) return;
+        const { today, week } = await res.json();
+        const fmt = d => \`\${d.generates} gen · \${d.edits} edit\`;
+        document.getElementById('stats-today').textContent = fmt(today);
+        document.getElementById('stats-week').textContent  = fmt(week);
+      } catch { /* silent */ }
+    }
+    loadStats();
+    setInterval(loadStats, 30000); // refresh mỗi 30s
+
+    // ── Log Viewer ─────────────────────────────────────────────────────────────
+    async function loadLogs() {
+      const file = document.getElementById('log-file-sel').value;
+      const pre  = document.getElementById('log-content');
+      try {
+        const res = await fetch(\`/api/logs?file=\${file}&lines=100\`);
+        if (!res.ok) { pre.textContent = 'Không thể tải log.'; return; }
+        const { content } = await res.json();
+        pre.textContent = content || '(trống)';
+        pre.scrollTop = pre.scrollHeight; // scroll to bottom
+      } catch (err) {
+        pre.textContent = 'Lỗi: ' + err.message;
+      }
+    }
+    loadLogs();
+    document.getElementById('btn-refresh-logs').addEventListener('click', loadLogs);
+    document.getElementById('log-file-sel').addEventListener('change', loadLogs);
+
+    // ── Test CLIProxy connection ────────────────────────────────────────────────
+    document.getElementById('btn-test-cliproxy').addEventListener('click', async () => {
+      const btn = document.getElementById('btn-test-cliproxy');
+      const url    = document.getElementById('CLIPROXY_API_URL').value.trim();
+      const apiKey = document.getElementById('CLIPROXY_API_KEY').value.trim();
+      if (!url) { showToast('Nhập URL trước', 'error'); return; }
+      btn.textContent = '...';
+      btn.className = 'btn-test';
+      try {
+        const res = await fetch('/api/test/cliproxy', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ url, apiKey }),
+        });
+        const data = await res.json();
+        if (data.ok) {
+          btn.textContent = \`✓ \${data.latencyMs}ms\`;
+          btn.className = 'btn-test ok';
+        } else {
+          btn.textContent = '✗ Fail';
+          btn.className = 'btn-test fail';
+          showToast('CLIProxy: ' + data.error, 'error');
+        }
+      } catch (err) {
+        btn.textContent = '✗ Fail';
+        btn.className = 'btn-test fail';
+        showToast('Test failed: ' + err.message, 'error');
+      }
+      setTimeout(() => { btn.textContent = 'Test'; btn.className = 'btn-test'; }, 4000);
+    });
 
     // ── Unified Channel Manager ────────────────────────────────────────────────
 
@@ -1054,6 +1207,72 @@ app.get('/api/discord/channel-names', async (req: Request, res: Response) => {
     res.json(result);
   } catch (err) {
     res.status(500).json({ error: String(err) });
+  }
+});
+
+// GET /api/stats — image generation counts from bot.db
+app.get('/api/stats', (_req: Request, res: Response) => {
+  try {
+    const db = new Database(dbPath, { readonly: true });
+    const tableExists = db.prepare(
+      "SELECT 1 FROM sqlite_master WHERE type='table' AND name='image_stats'"
+    ).get();
+    if (!tableExists) {
+      db.close();
+      return void res.json({ today: { generates: 0, edits: 0 }, week: { generates: 0, edits: 0 } });
+    }
+    const todayDate = new Date().toLocaleDateString('sv');
+    const weekAgo   = new Date(Date.now() - 6 * 24 * 60 * 60 * 1000).toLocaleDateString('sv');
+    const today = (db.prepare('SELECT generates, edits FROM image_stats WHERE date = ?').get(todayDate)
+      as { generates: number; edits: number } | undefined) ?? { generates: 0, edits: 0 };
+    const week = db.prepare(
+      'SELECT COALESCE(SUM(generates),0) AS generates, COALESCE(SUM(edits),0) AS edits FROM image_stats WHERE date >= ?'
+    ).get(weekAgo) as { generates: number; edits: number };
+    db.close();
+    res.json({ today, week });
+  } catch {
+    res.json({ today: { generates: 0, edits: 0 }, week: { generates: 0, edits: 0 } });
+  }
+});
+
+// GET /api/logs?file=bot&lines=100 — tail log files
+app.get('/api/logs', (req: Request, res: Response) => {
+  const fileKey = String(req.query['file'] ?? 'bot');
+  const lines   = Math.min(200, Math.max(1, parseInt(String(req.query['lines'] ?? '100'), 10)));
+  const fileMap: Record<string, string> = {
+    'bot':           'bot.log',
+    'bot-error':     'bot.error.log',
+    'config-ui':     'config-ui.log',
+    'config-ui-error': 'config-ui.error.log',
+  };
+  const filename = fileMap[fileKey];
+  if (!filename) return void res.status(400).json({ error: 'invalid file' });
+  const logPath = path.join(projectRoot, 'logs', filename);
+  if (!fs.existsSync(logPath)) return void res.json({ content: '' });
+  const content  = fs.readFileSync(logPath, 'utf-8');
+  const allLines = content.split('\n');
+  res.json({ content: allLines.slice(-lines).join('\n') });
+});
+
+// POST /api/test/cliproxy — ping CLIProxy, return ok + latency
+app.post('/api/test/cliproxy', async (req: Request, res: Response) => {
+  const { url, apiKey } = req.body as { url?: string; apiKey?: string };
+  if (!url?.trim()) return void res.status(400).json({ ok: false, error: 'URL required' });
+  const start = Date.now();
+  try {
+    const r = await fetch(`${url.trim()}/v1/models`, {
+      headers: { Authorization: `Bearer ${apiKey ?? ''}` },
+      signal: AbortSignal.timeout(5000),
+    });
+    const latencyMs = Date.now() - start;
+    // 401/404 means server is reachable, just auth/route mismatch
+    if (r.ok || r.status === 401 || r.status === 404) {
+      res.json({ ok: true, latencyMs, httpStatus: r.status });
+    } else {
+      res.json({ ok: false, error: `HTTP ${r.status}`, latencyMs });
+    }
+  } catch (err) {
+    res.json({ ok: false, error: err instanceof Error ? err.message : String(err), latencyMs: Date.now() - start });
   }
 });
 

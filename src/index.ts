@@ -8,6 +8,7 @@ import { ChannelPromptStore } from './services/channelPromptStore';
 import { QueueManager } from './services/queueManager';
 import { ImageClient } from './services/imageClient';
 import { ErrorReporter } from './services/errorReporter';
+import { StatsStore } from './services/statsStore';
 import { createMessageHandler } from './bot';
 
 // ─── Bootstrap ───────────────────────────────────────────────────────────────
@@ -45,6 +46,7 @@ const client = new Client({
 // No-op when ERROR_CHANNEL_ID is not configured.
 
 const errorReporter = new ErrorReporter(client, config.discord.errorChannelId);
+const statsStore = new StatsStore(db);
 
 // ─── Event routing ───────────────────────────────────────────────────────────
 
@@ -59,6 +61,7 @@ client.on(
     imageModel: config.image.model,
     imageSize: config.image.size,
     errorReporter,
+    statsStore,
   })
 );
 
