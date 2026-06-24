@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { ImageClient, ApiError } from '../src/services/imageClient';
+import { ImageClient, ApiError } from '../src/features/image-gen/client';
 
 function mockFetch(response: object) {
   return vi.fn().mockResolvedValue({
