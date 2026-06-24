@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import Database from 'better-sqlite3';
-import { SessionStore, HistoryEntry } from '../src/services/sessionStore';
+import { SessionStore, HistoryEntry } from '../src/shared/sessionStore';
 
 let db: Database.Database;
 let store: SessionStore;
