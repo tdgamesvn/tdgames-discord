@@ -1,20 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-// Mock discord.js before any import that pulls it in
 vi.mock('discord.js', () => ({}));
 
-// Mock handlers so tests don't need real API
-vi.mock('../src/handlers/imageHandler', () => ({
-  handleImageMessage: vi.fn().mockResolvedValue(undefined),
-}));
-vi.mock('../src/handlers/textChatHandler', () => ({
-  handleTextChat: vi.fn().mockResolvedValue(undefined),
-}));
-
 import { createMessageHandler } from '../src/bot';
-import { handleImageMessage } from '../src/handlers/imageHandler';
-import { handleTextChat } from '../src/handlers/textChatHandler';
-import type { BotDeps } from '../src/bot';
+import type { FeatureRouter } from '../src/core/router';
+import type { QueueManager } from '../src/core/queue';
+import type { FeatureContext } from '../src/core/types';
+import type { Feature } from '../src/core/types';
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -22,154 +14,123 @@ let _msgCounter = 0;
 
 function makeMessage(overrides: Record<string, unknown> = {}) {
   return {
-    // Each call gets a unique id (real Discord messages always have one).
-    // This prevents the module-level dedup Set in bot.ts from treating
-    // multiple test messages as duplicates of each other.
     id: `msg-${++_msgCounter}`,
     author: { id: 'user-123', bot: false },
-    channelId: 'chan-allowed',
-    content: 'a sunset over mountains',
+    channelId: 'chan-image',
+    content: 'a sunset',
     reply: vi.fn().mockResolvedValue({}),
     ...overrides,
   };
 }
 
-function makeDeps(overrides: Partial<BotDeps> = {}): BotDeps {
+function makeFeature(channelIds: string[]): Feature {
   return {
-    allowedChannelIds: new Set(['chan-allowed', 'chan-text']),
-    textChannelIds: new Set(['chan-text']),
-    queueManager: {
-      enqueue: vi.fn().mockReturnValue(true),
-      getPendingCount: vi.fn().mockReturnValue(0),
-    } as unknown as BotDeps['queueManager'],
-    sessionStore: {} as BotDeps['sessionStore'],
-    channelPromptStore: {} as BotDeps['channelPromptStore'],
-    imageClient: {} as BotDeps['imageClient'],
-    chatClient: {} as BotDeps['chatClient'],
-    imageModel: 'gpt-image-1',
-    imageSize: '1024x1024',
-    chatModel: 'gpt-4o-mini',
-    ...overrides,
+    id: 'test-feature',
+    channelIds: new Set(channelIds),
+    handler: vi.fn().mockResolvedValue(undefined),
   };
+}
+
+function makeRouter(feature?: Feature): FeatureRouter {
+  return {
+    resolve: vi.fn().mockReturnValue(feature),
+    register: vi.fn(),
+    registeredChannelIds: new Set(feature ? [...feature.channelIds] : []),
+  } as unknown as FeatureRouter;
+}
+
+function makeQueueManager(enqueues = true): QueueManager {
+  return {
+    enqueue: vi.fn().mockReturnValue(enqueues),
+    getPendingCount: vi.fn().mockReturnValue(0),
+  } as unknown as QueueManager;
+}
+
+function makeCtx(): FeatureContext {
+  return {} as unknown as FeatureContext;
 }
 
 // ─── Tests ──────────────────────────────────────────────────────────────────
 
 describe('createMessageHandler', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-  });
+  beforeEach(() => { vi.clearAllMocks(); });
 
   it('ignores messages from bots', async () => {
-    const deps = makeDeps();
-    const handler = createMessageHandler(deps);
-    const message = makeMessage({ author: { id: 'bot-456', bot: true } });
-
-    await handler(message as any);
-
-    expect(deps.queueManager.enqueue).not.toHaveBeenCalled();
-    expect(message.reply).not.toHaveBeenCalled();
+    const qm = makeQueueManager();
+    const router = makeRouter();
+    const handler = createMessageHandler(router, qm, makeCtx());
+    await handler(makeMessage({ author: { id: 'bot-1', bot: true } }) as any);
+    expect(qm.enqueue).not.toHaveBeenCalled();
   });
 
-  it('ignores messages from channels not in allowedChannelIds', async () => {
-    const deps = makeDeps();
-    const handler = createMessageHandler(deps);
-    const message = makeMessage({ channelId: 'chan-blocked' });
-
-    await handler(message as any);
-
-    expect(deps.queueManager.enqueue).not.toHaveBeenCalled();
-    expect(message.reply).not.toHaveBeenCalled();
+  it('ignores messages in unregistered channels (router returns undefined)', async () => {
+    const qm = makeQueueManager();
+    const router = makeRouter(undefined); // resolve returns undefined
+    const handler = createMessageHandler(router, qm, makeCtx());
+    await handler(makeMessage({ channelId: 'chan-unknown' }) as any);
+    expect(qm.enqueue).not.toHaveBeenCalled();
   });
 
-  it('enqueues task for valid message in allowed channel', async () => {
-    const deps = makeDeps();
-    const handler = createMessageHandler(deps);
-    const message = makeMessage();
-
-    await handler(message as any);
-
-    expect(deps.queueManager.enqueue).toHaveBeenCalledWith(
-      'chan-allowed',
-      expect.any(Function)
-    );
+  it('enqueues task for valid message in registered channel', async () => {
+    const feature = makeFeature(['chan-image']);
+    const qm = makeQueueManager();
+    const router = makeRouter(feature);
+    const handler = createMessageHandler(router, qm, makeCtx());
+    await handler(makeMessage({ channelId: 'chan-image' }) as any);
+    expect(qm.enqueue).toHaveBeenCalledWith('chan-image', expect.any(Function));
   });
 
   it('does not reply when successfully enqueued', async () => {
-    const deps = makeDeps();
-    const handler = createMessageHandler(deps);
-    const message = makeMessage();
-
+    const feature = makeFeature(['chan-image']);
+    const qm = makeQueueManager(true);
+    const router = makeRouter(feature);
+    const handler = createMessageHandler(router, qm, makeCtx());
+    const message = makeMessage({ channelId: 'chan-image' });
     await handler(message as any);
-
     expect(message.reply).not.toHaveBeenCalled();
   });
 
   it('replies with busy notice when queue is full', async () => {
-    const deps = makeDeps({
-      queueManager: {
-        enqueue: vi.fn().mockReturnValue(false),
-        getPendingCount: vi.fn().mockReturnValue(0),
-      } as unknown as BotDeps['queueManager'],
-    });
-    const handler = createMessageHandler(deps);
-    const message = makeMessage();
-
+    const feature = makeFeature(['chan-image']);
+    const qm = makeQueueManager(false);
+    const router = makeRouter(feature);
+    const handler = createMessageHandler(router, qm, makeCtx());
+    const message = makeMessage({ channelId: 'chan-image' });
     await handler(message as any);
-
-    expect(message.reply).toHaveBeenCalledWith(
-      expect.stringMatching(/busy/i)
-    );
+    expect(message.reply).toHaveBeenCalledWith(expect.stringMatching(/bận|busy/i));
   });
 
-  it('calls handleTextChat for text channel', async () => {
+  it('calls feature.handler with (message, ctx) when enqueued task executes', async () => {
+    const feature = makeFeature(['chan-image']);
     let capturedTask: (() => Promise<void>) | undefined;
-    const deps = makeDeps({
-      queueManager: {
-        enqueue: vi.fn().mockImplementation((_channelId: string, task: () => Promise<void>) => {
-          capturedTask = task;
-          return true;
-        }),
-        getPendingCount: vi.fn().mockReturnValue(0),
-      } as unknown as BotDeps['queueManager'],
-    });
-    const handler = createMessageHandler(deps);
-    const message = makeMessage({ channelId: 'chan-text' });
+    const qm = {
+      enqueue: vi.fn().mockImplementation((_ch: string, task: () => Promise<void>) => {
+        capturedTask = task;
+        return true;
+      }),
+    } as unknown as QueueManager;
+    const ctx = makeCtx();
+    const router = makeRouter(feature);
+    const handler = createMessageHandler(router, qm, ctx);
+    const message = makeMessage({ channelId: 'chan-image' });
 
     await handler(message as any);
-
     expect(capturedTask).toBeDefined();
     await capturedTask!();
 
-    expect(handleTextChat).toHaveBeenCalledWith(message, expect.objectContaining({ chatModel: 'gpt-4o-mini' }));
-    expect(handleImageMessage).not.toHaveBeenCalled();
+    expect(feature.handler).toHaveBeenCalledWith(message, ctx);
   });
 
-  it('calls handleImageMessage when enqueued task executes', async () => {
-    let capturedTask: (() => Promise<void>) | undefined;
-    const deps = makeDeps({
-      queueManager: {
-        enqueue: vi.fn().mockImplementation((_channelId: string, task: () => Promise<void>) => {
-          capturedTask = task;
-          return true;
-        }),
-        getPendingCount: vi.fn().mockReturnValue(0),
-      } as unknown as BotDeps['queueManager'],
-    });
-    const handler = createMessageHandler(deps);
-    const message = makeMessage();
+  it('skips duplicate message IDs', async () => {
+    const feature = makeFeature(['chan-image']);
+    const qm = makeQueueManager();
+    const router = makeRouter(feature);
+    const handler = createMessageHandler(router, qm, makeCtx());
+    const message = makeMessage({ channelId: 'chan-image', id: 'same-id-99' });
 
     await handler(message as any);
+    await handler(message as any); // duplicate
 
-    expect(capturedTask).toBeDefined();
-    await capturedTask!();
-
-    expect(handleImageMessage).toHaveBeenCalledWith(
-      message,
-      expect.objectContaining({
-        imageModel: 'gpt-image-1',
-        imageSize: '1024x1024',
-      })
-    );
+    expect(qm.enqueue).toHaveBeenCalledTimes(1);
   });
 });

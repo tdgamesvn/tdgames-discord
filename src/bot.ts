@@ -1,75 +1,40 @@
-import { Message } from 'discord.js';
-import { handleImageMessage } from './handlers/imageHandler';
-import { handleTextChat } from './handlers/textChatHandler';
-import type { ImageHandlerDeps } from './handlers/imageHandler';
-import type { TextChatHandlerDeps } from './handlers/textChatHandler';
-import type { QueueManager } from './services/queueManager';
-import type { ErrorReporter } from './services/errorReporter';
-
-export interface BotDeps extends ImageHandlerDeps, TextChatHandlerDeps {
-  allowedChannelIds: Set<string>;
-  textChannelIds: Set<string>;
-  queueManager: QueueManager;
-  errorReporter?: ErrorReporter;
-}
-
-// ─── Message-ID deduplication ────────────────────────────────────────────────
-// Defense-in-depth against Discord delivering the same gateway event twice
-// (can happen on reconnects or during a brief multi-instance overlap).
-// Keeps the last MAX_SEEN_IDS message IDs in memory; evicts oldest on overflow.
+import type { Message } from 'discord.js';
+import type { FeatureRouter } from './core/router';
+import type { QueueManager } from './core/queue';
+import type { FeatureContext } from './core/types';
 
 const MAX_SEEN_IDS = 500;
 const seenMessageIds = new Set<string>();
 
-function isDuplicate(messageId: string): boolean {
-  if (seenMessageIds.has(messageId)) return true;
-  seenMessageIds.add(messageId);
+function isDuplicate(id: string): boolean {
+  if (seenMessageIds.has(id)) return true;
+  seenMessageIds.add(id);
   if (seenMessageIds.size > MAX_SEEN_IDS) {
-    // Evict the oldest entry (insertion-order iteration)
     const [oldest] = seenMessageIds;
     seenMessageIds.delete(oldest);
   }
   return false;
 }
 
-/**
- * Creates the Discord messageCreate handler.
- * Extracted as a pure function so it can be unit-tested without a real Discord client.
- */
-export function createMessageHandler(deps: BotDeps) {
+export function createMessageHandler(
+  router: FeatureRouter,
+  queueManager: QueueManager,
+  ctx: FeatureContext,
+) {
   return async (message: Message): Promise<void> => {
-    // Ignore messages from bots (including ourselves)
     if (message.author.bot) return;
+    if (isDuplicate(message.id)) return;
 
-    // Channel guard — only respond in explicitly allowed channels
-    if (!deps.allowedChannelIds.has(message.channelId)) {
-      console.log(`[bot] Ignored message in unlisted channel ${message.channelId} (user ${message.author.id})`);
-      return;
-    }
+    const feature = router.resolve(message.channelId);
+    if (!feature) return;
 
-    // Deduplication guard — skip if this message ID was already seen
-    if (isDuplicate(message.id)) {
-      console.warn(`[dedup] Skipping duplicate message ${message.id}`);
-      return;
-    }
-
-    // Route to appropriate handler based on channel type
-    const isTextChannel = deps.textChannelIds.has(message.channelId);
-    console.log(`[bot] Message in ${isTextChannel ? 'text' : 'image'} channel ${message.channelId} (user ${message.author.id})`);
-    const handler = isTextChannel
-      ? () => handleTextChat(message, deps)
-      : () => handleImageMessage(message, deps);
-
-    // Enqueue the work; returns false when the channel queue is full
-    const enqueued = deps.queueManager.enqueue(
+    const enqueued = queueManager.enqueue(
       message.channelId,
-      handler,
+      () => feature.handler(message, ctx),
     );
 
     if (!enqueued) {
-      await message.reply(
-        '⏳ Channel is busy — please wait a moment and try again.'
-      );
+      await message.reply('⏳ Channel đang bận, vui lòng thử lại sau ít phút.');
     }
   };
 }
