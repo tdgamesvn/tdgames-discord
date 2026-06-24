@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { QueueManager } from '../src/services/queueManager';
+import { QueueManager } from '../src/core/queue';
 
 describe('QueueManager', () => {
   it('accepts a task when queue is empty', () => {
