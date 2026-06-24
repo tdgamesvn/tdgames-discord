@@ -16,11 +16,13 @@ export interface Config {
     token: string;
     clientId: string;
     allowedChannelIds: Set<string>;
+    textChannelIds: Set<string>;
     errorChannelId: string | null;
   };
   cliproxy: {
     apiUrl: string;
     apiKey: string;
+    maxConcurrent: number;
   };
   openai: {
     apiKey: string | null;
@@ -29,6 +31,9 @@ export interface Config {
   image: {
     model: string;
     size: string;
+  };
+  chat: {
+    model: string;
   };
   session: {
     historyLimit: number;
@@ -62,16 +67,28 @@ export function loadConfig(): Config {
     rawChannels.split(',').map((id) => id.trim()).filter(Boolean)
   );
 
+  const rawTextChannels = process.env.TEXT_CHANNEL_IDS ?? '';
+  const textChannelIds = new Set(
+    rawTextChannels.split(',').map((id) => id.trim()).filter(Boolean)
+  );
+
+  // Auto-add text channels to allowed channels so they pass the channel guard
+  for (const id of textChannelIds) {
+    allowedChannelIds.add(id);
+  }
+
   return {
     discord: {
       token: requireEnv('DISCORD_TOKEN'),
       clientId: requireEnv('DISCORD_CLIENT_ID'),
       allowedChannelIds,
+      textChannelIds,
       errorChannelId: process.env.ERROR_CHANNEL_ID?.trim() || null,
     },
     cliproxy: {
       apiUrl: requireEnv('CLIPROXY_API_URL'),
       apiKey: requireEnv('CLIPROXY_API_KEY'),
+      maxConcurrent: parseInt(process.env.CLIPROXY_MAX_CONCURRENT ?? '1', 10) || 1,
     },
     openai: {
       apiKey: process.env.OPENAI_API_KEY ?? null,
@@ -79,7 +96,10 @@ export function loadConfig(): Config {
     },
     image: {
       model: process.env.IMAGE_MODEL ?? 'gpt-image-1',
-      size: process.env.IMAGE_SIZE ?? '1024x1024',
+      size: process.env.IMAGE_SIZE ?? 'auto',
+    },
+    chat: {
+      model: process.env.CHAT_MODEL ?? 'gpt-4o-mini',
     },
     session: {
       historyLimit: requireEnvInt('SESSION_HISTORY_LIMIT'),

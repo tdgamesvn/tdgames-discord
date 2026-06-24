@@ -21,6 +21,12 @@
     <key>KeepAlive</key>
     <true/>
 
+    <!-- Wait 3 s before auto-restarting after exit.
+         Gives Discord time to deregister the old WS session so the new
+         instance does not overlap and cause duplicate event delivery. -->
+    <key>ThrottleInterval</key>
+    <integer>3</integer>
+
     <key>StandardOutPath</key>
     <string>/Users/tdgames_mac01/Work/apps/tdgames-discord/logs/bot.log</string>
 

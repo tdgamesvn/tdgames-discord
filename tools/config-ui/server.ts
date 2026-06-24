@@ -543,15 +543,27 @@ const HTML = `<!DOCTYPE html>
 
         <!-- Hidden — managed by channel cards below; included in form Save -->
         <input type="hidden" id="ALLOWED_CHANNEL_IDS" name="ALLOWED_CHANNEL_IDS" />
+        <input type="hidden" id="TEXT_CHANNEL_IDS" name="TEXT_CHANNEL_IDS" />
 
         <div class="field" style="align-items: flex-start; margin-top: 4px;">
-          <label style="padding-top: 8px; font-size:0.875rem; color:#b0b0c8; min-width:160px;">Channels</label>
+          <label style="padding-top: 8px; font-size:0.875rem; color:#b0b0c8; min-width:160px;">Image Channels</label>
           <div style="flex:1;">
             <div id="unified-channel-list"></div>
             <button type="button" id="btn-add-channel" style="
               margin-top:8px; background:#4f46e5; color:#fff; border:none;
               border-radius:5px; padding:5px 14px; font-size:0.8rem;
               cursor:pointer; font-weight:600;">+ Add Channel</button>
+          </div>
+        </div>
+
+        <div class="field" style="align-items: flex-start; margin-top: 16px;">
+          <label style="padding-top: 8px; font-size:0.875rem; color:#b0b0c8; min-width:160px;">Text Channels</label>
+          <div style="flex:1;">
+            <div id="text-channel-list"></div>
+            <button type="button" id="btn-add-text-channel" style="
+              margin-top:8px; background:#059669; color:#fff; border:none;
+              border-radius:5px; padding:5px 14px; font-size:0.8rem;
+              cursor:pointer; font-weight:600;">+ Add Text Channel</button>
           </div>
         </div>
 
@@ -602,13 +614,14 @@ const HTML = `<!DOCTYPE html>
           <label for="IMAGE_SIZE">Size</label>
           <div class="field-input-wrap">
             <select id="IMAGE_SIZE" name="IMAGE_SIZE">
+              <option value="auto">Tự động — Bot chọn tỉ lệ theo nội dung</option>
               <option value="1024x1024">1024 × 1024 — Vuông (1:1)</option>
               <option value="1536x1024">1536 × 1024 — Ngang (3:2)</option>
               <option value="1024x1536">1024 × 1536 — Dọc (2:3)</option>
             </select>
           </div>
         </div>
-        <p class="field-hint">Kích thước ảnh mặc định. User có thể ghi đè bằng flag <code style="color:#a78bfa">--ratio 16:9</code> khi nhắn tin.</p>
+        <p class="field-hint">Kích thước ảnh mặc định. <strong style="color:#a78bfa">Tự động</strong> = bot phân tích prompt chọn tỉ lệ phù hợp. User có thể ghi đè bằng flag <code style="color:#a78bfa">--ratio 16:9</code>.</p>
       </div>
 
       <!-- SESSION -->
@@ -697,7 +710,7 @@ const HTML = `<!DOCTYPE html>
 
   <script>
     const KEYS = [
-      'DISCORD_TOKEN', 'DISCORD_CLIENT_ID', 'ALLOWED_CHANNEL_IDS', 'ERROR_CHANNEL_ID',
+      'DISCORD_TOKEN', 'DISCORD_CLIENT_ID', 'ALLOWED_CHANNEL_IDS', 'TEXT_CHANNEL_IDS', 'ERROR_CHANNEL_ID',
       'CLIPROXY_API_URL', 'CLIPROXY_API_KEY',
       'IMAGE_MODEL', 'IMAGE_SIZE',
       'SESSION_HISTORY_LIMIT', 'SESSION_EXPIRE_MINUTES',
@@ -1039,8 +1052,12 @@ const HTML = `<!DOCTYPE html>
         const config = await r2.json();
         const allowedIds = (config.ALLOWED_CHANNEL_IDS || '').split(',').map(s => s.trim()).filter(Boolean);
 
-        // Union of both sources, preserving order (allowed first)
-        const allIds = [...new Set([...allowedIds, ...prompts.map(p => p.channelId)])];
+        // Exclude text channel IDs so they don't appear in Image Channels
+        const textIds = new Set((config.TEXT_CHANNEL_IDS || '').split(',').map(s => s.trim()).filter(Boolean));
+
+        // Union of both sources, preserving order (allowed first), minus text channels
+        const allIds = [...new Set([...allowedIds, ...prompts.map(p => p.channelId)])]
+          .filter(id => !textIds.has(id));
 
         const container = document.getElementById('unified-channel-list');
         container.innerHTML = '';
@@ -1063,7 +1080,107 @@ const HTML = `<!DOCTYPE html>
         .appendChild(renderUnifiedChannelCard({ channelId: '', systemPrompt: '' }, true));
     });
 
+    // ── Text Channel Manager ───────────────────────────────────────────────────
+
+    /** Rebuild TEXT_CHANNEL_IDS hidden input from current text channel cards. */
+    function syncTextChannelIds() {
+      const ids = [];
+      document.querySelectorAll('#text-channel-list .channel-card').forEach(card => {
+        const id = card.querySelector('.channel-id-input')?.value.trim();
+        if (id) ids.push(id);
+      });
+      document.getElementById('TEXT_CHANNEL_IDS').value = ids.join(',');
+    }
+
+    function renderTextChannelCard(data = { channelId: '', systemPrompt: '' }, isNew = false) {
+      const card = document.createElement('div');
+      card.className = 'channel-card';
+      card.style.borderColor = '#065f46';
+      const cachedName = data.channelId && channelNameCache[data.channelId]
+        ? '#' + channelNameCache[data.channelId] : '';
+      card.innerHTML = \`
+        <div class="channel-id-row">
+          <input type="text" placeholder="Channel ID (e.g. 123456789012345678)"
+                 value="\${data.channelId}" \${isNew ? '' : 'readonly'}
+                 class="channel-id-input" />
+          <button class="btn btn-sm btn-danger btn-delete-channel">\u{1F5D1}\u{FE0F}</button>
+        </div>
+        <div class="channel-name-label">\${cachedName}</div>
+        <textarea class="channel-prompt-input" rows="2"
+          placeholder="System prompt (optional) — vd: You are a helpful gaming assistant"
+        >\${data.systemPrompt || ''}</textarea>
+        <div class="card-actions">
+          <button class="btn btn-sm btn-save btn-save-channel" style="background:#059669;">\u{1F4BE} Save</button>
+        </div>
+      \`;
+
+      card.querySelector('.btn-save-channel').addEventListener('click', async () => {
+        const channelId = card.querySelector('.channel-id-input').value.trim();
+        const systemPrompt = card.querySelector('.channel-prompt-input').value;
+        if (!channelId) { showToast('Channel ID is required', 'error'); return; }
+        try {
+          const r = await fetch('/api/channel-prompts', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ channelId, systemPrompt }),
+          });
+          if (!r.ok) throw new Error((await r.json()).error);
+          card.querySelector('.channel-id-input').readOnly = true;
+          syncTextChannelIds();
+          await resolveAndApplyNames();
+          showToast('Text channel saved!', 'success');
+        } catch (err) {
+          showToast('Error: ' + err.message, 'error');
+        }
+      });
+
+      card.querySelector('.btn-delete-channel').addEventListener('click', async () => {
+        const channelId = card.querySelector('.channel-id-input').value.trim();
+        if (!channelId) { card.remove(); syncTextChannelIds(); return; }
+        try {
+          await fetch(\`/api/channel-prompts/\${channelId}\`, { method: 'DELETE' });
+          card.remove();
+          syncTextChannelIds();
+          showToast('Text channel removed', 'success');
+        } catch (err) {
+          showToast('Error: ' + err.message, 'error');
+        }
+      });
+
+      return card;
+    }
+
+    async function loadTextChannels() {
+      try {
+        const r1 = await fetch('/api/channel-prompts');
+        const prompts = await r1.json();
+        const promptMap = Object.fromEntries(prompts.map(p => [p.channelId, p.systemPrompt]));
+
+        const r2 = await fetch('/api/config');
+        const config = await r2.json();
+        const textIds = (config.TEXT_CHANNEL_IDS || '').split(',').map(s => s.trim()).filter(Boolean);
+
+        const container = document.getElementById('text-channel-list');
+        container.innerHTML = '';
+        for (const id of textIds) {
+          container.appendChild(renderTextChannelCard(
+            { channelId: id, systemPrompt: promptMap[id] || '' }, false
+          ));
+        }
+        document.getElementById('TEXT_CHANNEL_IDS').value = textIds.join(',');
+        await resolveAndApplyNames();
+      } catch (err) {
+        showToast('Failed to load text channels: ' + err.message, 'error');
+      }
+    }
+
+    document.getElementById('btn-add-text-channel').addEventListener('click', () => {
+      document.getElementById('text-channel-list')
+        .appendChild(renderTextChannelCard({ channelId: '', systemPrompt: '' }, true));
+    });
+
     loadUnifiedChannels();
+    loadTextChannels();
   </script>
 </body>
 </html>`;
@@ -1223,11 +1340,12 @@ app.get('/api/stats', (_req: Request, res: Response) => {
     }
     const todayDate = new Date().toLocaleDateString('sv');
     const weekAgo   = new Date(Date.now() - 6 * 24 * 60 * 60 * 1000).toLocaleDateString('sv');
-    const today = (db.prepare('SELECT generates, edits FROM image_stats WHERE date = ?').get(todayDate)
-      as { generates: number; edits: number } | undefined) ?? { generates: 0, edits: 0 };
+    type StatRow = { generates: number; edits: number };
+    const todayRow = db.prepare('SELECT generates, edits FROM image_stats WHERE date = ?').get(todayDate) as StatRow | undefined;
+    const today = todayRow ?? { generates: 0, edits: 0 };
     const week = db.prepare(
       'SELECT COALESCE(SUM(generates),0) AS generates, COALESCE(SUM(edits),0) AS edits FROM image_stats WHERE date >= ?'
-    ).get(weekAgo) as { generates: number; edits: number };
+    ).get(weekAgo) as StatRow;
     db.close();
     res.json({ today, week });
   } catch {

@@ -1,13 +1,35 @@
 import { Message } from 'discord.js';
 import { handleImageMessage } from './handlers/imageHandler';
+import { handleTextChat } from './handlers/textChatHandler';
 import type { ImageHandlerDeps } from './handlers/imageHandler';
+import type { TextChatHandlerDeps } from './handlers/textChatHandler';
 import type { QueueManager } from './services/queueManager';
 import type { ErrorReporter } from './services/errorReporter';
 
-export interface BotDeps extends ImageHandlerDeps {
+export interface BotDeps extends ImageHandlerDeps, TextChatHandlerDeps {
   allowedChannelIds: Set<string>;
+  textChannelIds: Set<string>;
   queueManager: QueueManager;
   errorReporter?: ErrorReporter;
+}
+
+// ─── Message-ID deduplication ────────────────────────────────────────────────
+// Defense-in-depth against Discord delivering the same gateway event twice
+// (can happen on reconnects or during a brief multi-instance overlap).
+// Keeps the last MAX_SEEN_IDS message IDs in memory; evicts oldest on overflow.
+
+const MAX_SEEN_IDS = 500;
+const seenMessageIds = new Set<string>();
+
+function isDuplicate(messageId: string): boolean {
+  if (seenMessageIds.has(messageId)) return true;
+  seenMessageIds.add(messageId);
+  if (seenMessageIds.size > MAX_SEEN_IDS) {
+    // Evict the oldest entry (insertion-order iteration)
+    const [oldest] = seenMessageIds;
+    seenMessageIds.delete(oldest);
+  }
+  return false;
 }
 
 /**
@@ -22,10 +44,22 @@ export function createMessageHandler(deps: BotDeps) {
     // Channel guard — only respond in explicitly allowed channels
     if (!deps.allowedChannelIds.has(message.channelId)) return;
 
+    // Deduplication guard — skip if this message ID was already seen
+    if (isDuplicate(message.id)) {
+      console.warn(`[dedup] Skipping duplicate message ${message.id}`);
+      return;
+    }
+
+    // Route to appropriate handler based on channel type
+    const isTextChannel = deps.textChannelIds.has(message.channelId);
+    const handler = isTextChannel
+      ? () => handleTextChat(message, deps)
+      : () => handleImageMessage(message, deps);
+
     // Enqueue the work; returns false when the channel queue is full
     const enqueued = deps.queueManager.enqueue(
       message.channelId,
-      () => handleImageMessage(message, deps)
+      handler,
     );
 
     if (!enqueued) {

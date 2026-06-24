@@ -40,17 +40,68 @@ const RATIO_MAP: Record<string, string> = {
   'tall': '1024x1536',
 };
 
+// ─── Auto-detect aspect ratio from prompt content ────────────────────────────
+// When IMAGE_SIZE=auto and no --ratio flag, analyze the prompt to pick the best
+// aspect ratio. Falls back to square (1024x1024) when no strong signal is found.
+
+const PORTRAIT_KEYWORDS = [
+  // Vietnamese
+  'chân dung', 'nhân vật', 'người', 'cô gái', 'chàng trai', 'avatar',
+  'selfie', 'khuôn mặt', 'nửa người', 'toàn thân', 'chibi',
+  'poster phim', 'bìa sách', 'story', 'tin',
+  // English
+  'portrait', 'character', 'person', 'face', 'headshot', 'full body',
+  'half body', 'upper body', 'mugshot', 'profile pic',
+  'movie poster', 'book cover', 'phone wallpaper',
+];
+
+const LANDSCAPE_KEYWORDS = [
+  // Vietnamese
+  'phong cảnh', 'toàn cảnh', 'bối cảnh', 'cảnh', 'banner', 'nền',
+  'background', 'bìa', 'cover', 'màn hình', 'desktop', 'wallpaper',
+  'panorama', 'sân khấu', 'thành phố', 'biển', 'núi', 'rừng',
+  'game scene', 'battlefield', 'trận chiến',
+  // English
+  'landscape', 'scene', 'scenery', 'panoramic', 'wide shot',
+  'establishing shot', 'environment', 'cityscape', 'skyline',
+  'battlefield', 'arena', 'stadium', 'thumbnail', 'header',
+];
+
+function autoDetectSize(prompt: string): string {
+  const lower = prompt.toLowerCase();
+
+  let portraitScore = 0;
+  let landscapeScore = 0;
+
+  for (const kw of PORTRAIT_KEYWORDS) {
+    if (lower.includes(kw)) portraitScore++;
+  }
+  for (const kw of LANDSCAPE_KEYWORDS) {
+    if (lower.includes(kw)) landscapeScore++;
+  }
+
+  if (portraitScore > landscapeScore) return '1024x1536';
+  if (landscapeScore > portraitScore) return '1536x1024';
+  return '1024x1024'; // default: square
+}
+
 /**
  * Parse --ratio flag from prompt.
  * Returns { prompt: cleaned prompt, size: resolved size }.
  * Example: "vẽ con rồng --ratio 16:9" → { prompt: "vẽ con rồng", size: "1536x1024" }
+ *
+ * When defaultSize is "auto", the size is determined by analyzing the prompt
+ * content (portrait vs landscape vs square) — unless --ratio overrides it.
  */
 function parseRatio(raw: string, defaultSize: string): { prompt: string; size: string } {
   const match = raw.match(/--ratio\s+(\S+)/i);
-  if (!match) return { prompt: raw, size: defaultSize };
+  if (!match) {
+    const size = defaultSize === 'auto' ? autoDetectSize(raw) : defaultSize;
+    return { prompt: raw, size };
+  }
 
   const key = match[1].toLowerCase();
-  const size = RATIO_MAP[key] ?? defaultSize;
+  const size = RATIO_MAP[key] ?? (defaultSize === 'auto' ? '1024x1024' : defaultSize);
   const prompt = raw.replace(match[0], '').trim();
   return { prompt, size };
 }
@@ -157,7 +208,7 @@ export async function handleImageMessage(
 
     // Edit placeholder: clear status text and attach image
     const sentMsg = await thinkingMsg.edit({
-      content: `✅ Done! \`${size}\``,
+      content: `✅ Done! \`${size}\`${imageSize === 'auto' ? ' (auto)' : ''}`,
       files: [attachment],
     });
 

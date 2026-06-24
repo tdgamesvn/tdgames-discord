@@ -1,5 +1,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
+import { execSync } from 'child_process';
 import { Client, GatewayIntentBits } from 'discord.js';
 import { getConfig } from './config';
 import { initDb, cleanupExpiredSessions } from './db/schema';
@@ -7,114 +8,235 @@ import { SessionStore } from './services/sessionStore';
 import { ChannelPromptStore } from './services/channelPromptStore';
 import { QueueManager } from './services/queueManager';
 import { ImageClient } from './services/imageClient';
+import { ChatClient } from './services/chatClient';
 import { ErrorReporter } from './services/errorReporter';
 import { StatsStore } from './services/statsStore';
 import { createMessageHandler } from './bot';
 
-// ─── Bootstrap ───────────────────────────────────────────────────────────────
+// ─── Single-instance guard ───────────────────────────────────────────────────
+// Ensures only ONE bot process is connected to Discord at any time.
+// Two-phase approach:
+//   1. PID file — kill the known previous instance
+//   2. pgrep scan — kill ANY other process running index.ts (orphaned tsx watch,
+//      manually-started sessions, etc.) that the PID file doesn't know about
+// After all old processes are confirmed dead, we wait an extra 3 s for Discord
+// to fully deregister their gateway sessions before connecting.
 
-const config = getConfig();
-const db = initDb('data/bot.db');
-
-const sessionStore = new SessionStore(
-  db,
-  config.session.historyLimit,
-  config.session.expireMinutes
-);
-const channelPromptStore = new ChannelPromptStore(db);
-const queueManager = new QueueManager(config.queue.maxPending);
-const imageClient = new ImageClient(
-  config.cliproxy.apiUrl,
-  config.cliproxy.apiKey,
-  config.openai.apiKey ?? undefined,
-  config.openai.apiUrl,
-);
-
-
-// ─── Discord client ───────────────────────────────────────────────────────────
-
-const client = new Client({
-  intents: [
-    GatewayIntentBits.Guilds,
-    GatewayIntentBits.GuildMessages,
-    GatewayIntentBits.MessageContent, // Required to read message content
-  ],
-});
-
-// ─── Error reporter ───────────────────────────────────────────────────────────
-// Created after client so we can pass the real instance.
-// No-op when ERROR_CHANNEL_ID is not configured.
-
-const errorReporter = new ErrorReporter(client, config.discord.errorChannelId);
-const statsStore = new StatsStore(db);
-
-// ─── Event routing ───────────────────────────────────────────────────────────
-
-client.on(
-  'messageCreate',
-  createMessageHandler({
-    allowedChannelIds: config.discord.allowedChannelIds,
-    queueManager,
-    sessionStore,
-    channelPromptStore,
-    imageClient,
-    imageModel: config.image.model,
-    imageSize: config.image.size,
-    errorReporter,
-    statsStore,
-  })
-);
-
-client.once('ready', (c) => {
-  console.log(`✅ Logged in as ${c.user.tag}`);
-
+async function enforceSingleInstance(): Promise<void> {
   const dataDir = path.join(process.cwd(), 'data');
   fs.mkdirSync(dataDir, { recursive: true });
-  fs.writeFileSync(path.join(dataDir, 'bot.pid'), String(process.pid));
-  console.log(`📝 PID ${process.pid} written to data/bot.pid`);
+  const pidFile = path.join(dataDir, 'bot.pid');
 
-  // Periodic cleanup of expired sessions (every hour)
-  setInterval(() => {
-    const deleted = cleanupExpiredSessions(db, config.session.expireMinutes);
-    if (deleted > 0) {
-      console.log(`🧹 Cleaned up ${deleted} expired session(s)`);
+  const myPid = process.pid;
+  // tsx spawns: parent (tsx CLI) → child (node --require ... index.ts)
+  // process.ppid is the tsx parent — we must NOT kill it.
+  const myPpid = process.ppid;
+  const pidsToKill: number[] = [];
+
+  // Phase 1: PID file
+  if (fs.existsSync(pidFile)) {
+    const oldPid = parseInt(fs.readFileSync(pidFile, 'utf-8').trim(), 10);
+    if (!isNaN(oldPid) && oldPid !== myPid && oldPid !== myPpid) {
+      pidsToKill.push(oldPid);
     }
-  }, 60 * 60 * 1000);
-});
+  }
 
-client.on('error', (err) => {
-  console.error('Discord client error:', err);
-  void errorReporter.report(err, { source: 'discord-client' });
-});
+  // Phase 2: pgrep — find ALL processes whose command line contains "index.ts"
+  // within our project directory, excluding ourselves, our parent, and config-ui
+  try {
+    const projectDir = process.cwd();
+    const raw = execSync('pgrep -f "index\\.ts"', { encoding: 'utf-8' }).trim();
+    for (const line of raw.split('\n')) {
+      const pid = parseInt(line.trim(), 10);
+      if (isNaN(pid) || pid === myPid || pid === myPpid) continue;
 
-// ─── Global error hooks ───────────────────────────────────────────────────────
+      // Verify this PID is actually running OUR index.ts (not some other project)
+      try {
+        const cmdline = execSync(`ps -p ${pid} -o args=`, { encoding: 'utf-8' }).trim();
+        if (cmdline.includes(projectDir) && cmdline.includes('index.ts') && !cmdline.includes('config-ui')) {
+          if (!pidsToKill.includes(pid)) pidsToKill.push(pid);
+        }
+      } catch {
+        // Process gone between pgrep and ps — fine
+      }
+    }
+  } catch {
+    // pgrep returns exit 1 when no matches — ignore
+  }
 
-process.on('uncaughtException', (err) => {
-  console.error('Uncaught exception:', err);
-  void errorReporter.report(err, { source: 'uncaughtException' });
-});
+  // Kill all found processes and wait for them to die
+  if (pidsToKill.length > 0) {
+    console.log(`🛑 Killing ${pidsToKill.length} old instance(s): ${pidsToKill.join(', ')}`);
+    for (const pid of pidsToKill) {
+      try { process.kill(pid, 'SIGTERM'); } catch { /* already dead */ }
+    }
 
-process.on('unhandledRejection', (reason) => {
-  console.error('Unhandled rejection:', reason);
-  void errorReporter.report(reason, { source: 'unhandledRejection' });
-});
+    // Poll until ALL are gone (max 8 s)
+    const MAX_WAIT_MS = 8_000;
+    const POLL_MS = 100;
+    let waited = 0;
+    while (waited < MAX_WAIT_MS) {
+      await new Promise((r) => setTimeout(r, POLL_MS));
+      waited += POLL_MS;
+      const alive = pidsToKill.filter((pid) => {
+        try { process.kill(pid, 0); return true; } catch { return false; }
+      });
+      if (alive.length === 0) {
+        console.log(`✅ All old instances exited after ${waited}ms`);
+        break;
+      }
+    }
 
-// ─── Graceful shutdown ───────────────────────────────────────────────────────
+    // Force-kill any stubborn survivors
+    const stillAlive = pidsToKill.filter((pid) => {
+      try { process.kill(pid, 0); return true; } catch { return false; }
+    });
+    for (const pid of stillAlive) {
+      console.warn(`⚠️  Force-killing PID ${pid} (did not exit gracefully)`);
+      try { process.kill(pid, 'SIGKILL'); } catch { /* ignore */ }
+    }
 
-function shutdown(signal: string) {
-  console.log(`\n${signal} received — shutting down...`);
-  client.destroy();
-  db.close();
-  try { fs.unlinkSync(path.join(process.cwd(), 'data', 'bot.pid')); } catch {}
-  process.exit(0);
+    // Wait for Discord to deregister old gateway sessions
+    console.log('⏳ Waiting 3s for Discord to deregister old gateway session(s)...');
+    await new Promise((r) => setTimeout(r, 3_000));
+    console.log('✅ Proceeding with login.');
+  }
+
+  // Write our own PID so the next start can find us
+  fs.writeFileSync(pidFile, String(process.pid));
+  console.log(`📝 PID ${process.pid} written to data/bot.pid`);
 }
 
-process.on('SIGINT', () => shutdown('SIGINT'));
-process.on('SIGTERM', () => shutdown('SIGTERM'));
+// ─── Bootstrap (runs after single-instance guard) ────────────────────────────
 
-// ─── Login ───────────────────────────────────────────────────────────────────
+async function main(): Promise<void> {
+  await enforceSingleInstance();
 
-client.login(config.discord.token).catch((err) => {
-  console.error('Failed to login to Discord:', err);
+  const config = getConfig();
+  const db = initDb('data/bot.db');
+
+  const sessionStore = new SessionStore(
+    db,
+    config.session.historyLimit,
+    config.session.expireMinutes
+  );
+  const channelPromptStore = new ChannelPromptStore(db);
+  const queueManager = new QueueManager(config.queue.maxPending);
+  const imageClient = new ImageClient(
+    config.cliproxy.apiUrl,
+    config.cliproxy.apiKey,
+    config.openai.apiKey ?? undefined,
+    config.openai.apiUrl,
+    config.cliproxy.maxConcurrent,
+  );
+  const chatClient = new ChatClient(
+    config.cliproxy.apiUrl,
+    config.cliproxy.apiKey,
+    config.cliproxy.maxConcurrent,
+  );
+
+  // ─── Fallback warning ──────────────────────────────────────────────────────
+  if (!config.openai.apiKey) {
+    console.warn('⚠️  OPENAI_API_KEY not set — no fallback if CLIProxy is rate-limited or down.');
+  }
+
+  // ─── Text channel info ─────────────────────────────────────────────────────
+  if (config.discord.textChannelIds.size > 0) {
+    console.log(`💬 Text chat enabled for ${config.discord.textChannelIds.size} channel(s) using model: ${config.chat.model}`);
+  }
+
+  // ─── Discord client ─────────────────────────────────────────────────────────
+
+  const client = new Client({
+    intents: [
+      GatewayIntentBits.Guilds,
+      GatewayIntentBits.GuildMessages,
+      GatewayIntentBits.MessageContent, // Required to read message content
+    ],
+  });
+
+  // ─── Error reporter ─────────────────────────────────────────────────────────
+  // Created after client so we can pass the real instance.
+  // No-op when ERROR_CHANNEL_ID is not configured.
+
+  const errorReporter = new ErrorReporter(client, config.discord.errorChannelId);
+  const statsStore = new StatsStore(db);
+
+  // ─── Event routing ──────────────────────────────────────────────────────────
+
+  client.on(
+    'messageCreate',
+    createMessageHandler({
+      allowedChannelIds: config.discord.allowedChannelIds,
+      textChannelIds: config.discord.textChannelIds,
+      queueManager,
+      sessionStore,
+      channelPromptStore,
+      imageClient,
+      chatClient,
+      imageModel: config.image.model,
+      imageSize: config.image.size,
+      chatModel: config.chat.model,
+      errorReporter,
+      statsStore,
+    })
+  );
+
+  client.once('ready', (c) => {
+    console.log(`✅ Logged in as ${c.user.tag}`);
+
+    // Periodic cleanup of expired sessions (every hour)
+    setInterval(() => {
+      const deleted = cleanupExpiredSessions(db, config.session.expireMinutes);
+      if (deleted > 0) {
+        console.log(`🧹 Cleaned up ${deleted} expired session(s)`);
+      }
+    }, 60 * 60 * 1000);
+  });
+
+  client.on('error', (err) => {
+    console.error('Discord client error:', err);
+    void errorReporter.report(err, { source: 'discord-client' });
+  });
+
+  // ─── Global error hooks ─────────────────────────────────────────────────────
+
+  process.on('uncaughtException', (err) => {
+    console.error('Uncaught exception:', err);
+    void errorReporter.report(err, { source: 'uncaughtException' });
+  });
+
+  process.on('unhandledRejection', (reason) => {
+    console.error('Unhandled rejection:', reason);
+    void errorReporter.report(reason, { source: 'unhandledRejection' });
+  });
+
+  // ─── Graceful shutdown ──────────────────────────────────────────────────────
+  // IMPORTANT: client.destroy() sends a WebSocket close frame, but process.exit()
+  // immediately after may kill the process before Discord acknowledges the close.
+  // Discord then keeps the old WS session alive for ~1-2 s, causing the new
+  // instance to overlap → duplicate event delivery → duplicate replies.
+  // The 1 s sleep gives the close frame time to reach Discord before we exit.
+
+  async function shutdown(signal: string): Promise<void> {
+    console.log(`\n${signal} received — shutting down...`);
+    client.destroy();
+    await new Promise((r) => setTimeout(r, 1_000)); // Let WS close handshake complete
+    db.close();
+    try { fs.unlinkSync(path.join(process.cwd(), 'data', 'bot.pid')); } catch {}
+    process.exit(0);
+  }
+
+  process.on('SIGINT', () => { void shutdown('SIGINT'); });
+  process.on('SIGTERM', () => { void shutdown('SIGTERM'); });
+
+  // ─── Login ──────────────────────────────────────────────────────────────────
+  // Only reached after old instance has fully exited (enforceSingleInstance).
+
+  await client.login(config.discord.token);
+}
+
+main().catch((err) => {
+  console.error('Failed to start bot:', err);
   process.exit(1);
 });

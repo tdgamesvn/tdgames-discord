@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { ImageClient } from '../src/services/imageClient';
+import { ImageClient, ApiError } from '../src/services/imageClient';
 
 function mockFetch(response: object) {
   return vi.fn().mockResolvedValue({
@@ -8,8 +8,17 @@ function mockFetch(response: object) {
   });
 }
 
-function mockFetchError(status: number, statusText: string) {
-  return vi.fn().mockResolvedValue({ ok: false, status, statusText });
+/** Mock a failed fetch response with optional Retry-After header. */
+function mockFetchError(status: number, statusText: string, retryAfter?: string) {
+  return vi.fn().mockResolvedValue({
+    ok: false,
+    status,
+    statusText,
+    headers: {
+      get: (name: string) => (name.toLowerCase() === 'retry-after' ? (retryAfter ?? null) : null),
+    },
+    json: async () => ({}),
+  });
 }
 
 beforeEach(() => {
@@ -18,6 +27,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  vi.useRealTimers(); // restore in case a test activated fake timers
 });
 
 describe('ImageClient', () => {
@@ -92,13 +102,58 @@ describe('ImageClient', () => {
     expect(Buffer.isBuffer(result.buffer)).toBe(true);
   });
 
-  it('throws on non-2xx response', async () => {
+  it('throws ApiError on non-2xx response', async () => {
+    // The retry logic sleeps on 429 — use fake timers so the test doesn't actually wait.
+    vi.useFakeTimers();
     vi.stubGlobal('fetch', mockFetchError(429, 'Too Many Requests'));
 
     const client = new ImageClient(API_URL, API_KEY);
-    await expect(
-      client.generate({ prompt: 'test', model: 'gpt-image-1', size: '1024x1024' })
-    ).rejects.toThrow('429');
+    const promise = client.generate({ prompt: 'test', model: 'gpt-image-1', size: '1024x1024' });
+
+    // Attach the rejection handler BEFORE advancing timers.
+    const assertion = expect(promise).rejects.toThrow('429');
+
+    // Drain all retry sleeps instantly
+    await vi.runAllTimersAsync();
+
+    await assertion;
+  });
+
+  it('uses Retry-After header delay when provided', async () => {
+    vi.useFakeTimers();
+
+    // Return 429 with Retry-After: 30 (seconds) on every call
+    vi.stubGlobal('fetch', mockFetchError(429, 'Too Many Requests', '30'));
+
+    const client = new ImageClient(API_URL, API_KEY);
+    const promise = client.generate({ prompt: 'test', model: 'gpt-image-1', size: '1024x1024' });
+
+    const assertion = expect(promise).rejects.toThrow('429');
+
+    await vi.runAllTimersAsync();
+    await assertion;
+  });
+
+  it('respects retry_after in response body for 429', async () => {
+    vi.useFakeTimers();
+
+    // 429 with no Retry-After header, but retry_after in body
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 429,
+      statusText: 'Too Many Requests',
+      headers: { get: () => null },
+      json: async () => ({ retry_after: 15.5 }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const client = new ImageClient(API_URL, API_KEY);
+    const promise = client.generate({ prompt: 'test', model: 'gpt-image-1', size: '1024x1024' });
+
+    const assertion = expect(promise).rejects.toThrow('429');
+
+    await vi.runAllTimersAsync();
+    await assertion;
   });
 
   it('throws when API returns no image data', async () => {
@@ -119,7 +174,13 @@ describe('ImageClient', () => {
 
     const fetchMock = vi
       .fn()
-      .mockResolvedValueOnce({ ok: false, status: 500, statusText: 'Internal Server Error' })
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 500,
+        statusText: 'Internal Server Error',
+        headers: { get: () => null },
+        json: async () => ({}),
+      })
       .mockResolvedValueOnce({ ok: true, json: async () => successData });
     vi.stubGlobal('fetch', fetchMock);
 
@@ -134,19 +195,16 @@ describe('ImageClient', () => {
     expect(Buffer.isBuffer(result.buffer)).toBe(true);
   });
 
-  it('does NOT fallback on 4xx errors', async () => {
+  it('does NOT fallback on 4xx errors (except 429)', async () => {
     const FALLBACK_KEY = 'openai-fallback-key';
 
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValueOnce({ ok: false, status: 400, statusText: 'Bad Request' });
-    vi.stubGlobal('fetch', fetchMock);
+    vi.stubGlobal('fetch', mockFetchError(400, 'Bad Request'));
 
     const client = new ImageClient(API_URL, API_KEY, FALLBACK_KEY);
     await expect(
       client.generate({ prompt: 'test', model: 'gpt-image-1', size: '1024x1024' })
     ).rejects.toThrow('400');
 
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(fetch)).toHaveBeenCalledTimes(1);
   });
 });

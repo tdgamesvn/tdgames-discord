@@ -3,19 +3,29 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // Mock discord.js before any import that pulls it in
 vi.mock('discord.js', () => ({}));
 
-// Mock imageHandler so tests don't need real API
+// Mock handlers so tests don't need real API
 vi.mock('../src/handlers/imageHandler', () => ({
   handleImageMessage: vi.fn().mockResolvedValue(undefined),
+}));
+vi.mock('../src/handlers/textChatHandler', () => ({
+  handleTextChat: vi.fn().mockResolvedValue(undefined),
 }));
 
 import { createMessageHandler } from '../src/bot';
 import { handleImageMessage } from '../src/handlers/imageHandler';
+import { handleTextChat } from '../src/handlers/textChatHandler';
 import type { BotDeps } from '../src/bot';
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
+let _msgCounter = 0;
+
 function makeMessage(overrides: Record<string, unknown> = {}) {
   return {
+    // Each call gets a unique id (real Discord messages always have one).
+    // This prevents the module-level dedup Set in bot.ts from treating
+    // multiple test messages as duplicates of each other.
+    id: `msg-${++_msgCounter}`,
     author: { id: 'user-123', bot: false },
     channelId: 'chan-allowed',
     content: 'a sunset over mountains',
@@ -26,15 +36,19 @@ function makeMessage(overrides: Record<string, unknown> = {}) {
 
 function makeDeps(overrides: Partial<BotDeps> = {}): BotDeps {
   return {
-    allowedChannelIds: new Set(['chan-allowed']),
+    allowedChannelIds: new Set(['chan-allowed', 'chan-text']),
+    textChannelIds: new Set(['chan-text']),
     queueManager: {
       enqueue: vi.fn().mockReturnValue(true),
       getPendingCount: vi.fn().mockReturnValue(0),
     } as unknown as BotDeps['queueManager'],
     sessionStore: {} as BotDeps['sessionStore'],
+    channelPromptStore: {} as BotDeps['channelPromptStore'],
     imageClient: {} as BotDeps['imageClient'],
+    chatClient: {} as BotDeps['chatClient'],
     imageModel: 'gpt-image-1',
     imageSize: '1024x1024',
+    chatModel: 'gpt-4o-mini',
     ...overrides,
   };
 }
@@ -106,6 +120,29 @@ describe('createMessageHandler', () => {
     expect(message.reply).toHaveBeenCalledWith(
       expect.stringMatching(/busy/i)
     );
+  });
+
+  it('calls handleTextChat for text channel', async () => {
+    let capturedTask: (() => Promise<void>) | undefined;
+    const deps = makeDeps({
+      queueManager: {
+        enqueue: vi.fn().mockImplementation((_channelId: string, task: () => Promise<void>) => {
+          capturedTask = task;
+          return true;
+        }),
+        getPendingCount: vi.fn().mockReturnValue(0),
+      } as unknown as BotDeps['queueManager'],
+    });
+    const handler = createMessageHandler(deps);
+    const message = makeMessage({ channelId: 'chan-text' });
+
+    await handler(message as any);
+
+    expect(capturedTask).toBeDefined();
+    await capturedTask!();
+
+    expect(handleTextChat).toHaveBeenCalledWith(message, expect.objectContaining({ chatModel: 'gpt-4o-mini' }));
+    expect(handleImageMessage).not.toHaveBeenCalled();
   });
 
   it('calls handleImageMessage when enqueued task executes', async () => {

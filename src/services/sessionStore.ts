@@ -2,7 +2,8 @@ import Database from 'better-sqlite3';
 
 export type HistoryEntry =
   | { role: 'user'; prompt: string }
-  | { role: 'bot'; prompt: string; imageUrl: string };
+  | { role: 'bot'; prompt: string; imageUrl: string }
+  | { role: 'assistant'; content: string };
 
 export interface Session {
   userId: string;
