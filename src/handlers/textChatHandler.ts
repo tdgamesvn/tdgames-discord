@@ -3,6 +3,7 @@ import type { ChatClient, ChatMessage } from '../services/chatClient';
 import type { SessionStore, HistoryEntry } from '../services/sessionStore';
 import type { ChannelPromptStore } from '../services/channelPromptStore';
 import type { ErrorReporter } from '../services/errorReporter';
+import type { StatsStore } from '../services/statsStore';
 
 export interface TextChatHandlerDeps {
   chatClient: ChatClient;
@@ -10,6 +11,7 @@ export interface TextChatHandlerDeps {
   channelPromptStore: ChannelPromptStore;
   chatModel: string;
   errorReporter?: ErrorReporter;
+  statsStore?: StatsStore;
 }
 
 // Discord message content limit
@@ -86,7 +88,7 @@ export async function handleTextChat(
   message: Message,
   deps: TextChatHandlerDeps,
 ): Promise<void> {
-  const { chatClient, sessionStore, channelPromptStore, chatModel, errorReporter } = deps;
+  const { chatClient, sessionStore, channelPromptStore, chatModel, errorReporter, statsStore } = deps;
   const userId = message.author.id;
   const channelId = message.channelId;
   const rawContent = message.content.trim();
@@ -144,6 +146,9 @@ export async function handleTextChat(
     history.push({ role: 'assistant', content: responseText } as HistoryEntry);
 
     sessionStore.upsert(userId, channelId, history);
+
+    // Track usage stats (CLIProxy vs OpenAI fallback)
+    statsStore?.increment(result.usedFallback ? 'text_openai' : 'text_cliproxy');
   } catch (err) {
     const msg = err instanceof Error ? err.message : 'Unknown error';
     await message.reply(`❌ Error: ${msg}`);

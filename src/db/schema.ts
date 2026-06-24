@@ -38,6 +38,18 @@ export function initDb(dbPath: string = DEFAULT_DB_PATH): Database.Database {
     );
   `);
 
+  // Migration: add provider-split columns (safe to re-run)
+  const addCol = (table: string, col: string) => {
+    try {
+      db.exec(`ALTER TABLE ${table} ADD COLUMN ${col} INTEGER NOT NULL DEFAULT 0`);
+    } catch {
+      // Column already exists — ignore
+    }
+  };
+  addCol('image_stats', 'image_openai');
+  addCol('image_stats', 'text_cliproxy');
+  addCol('image_stats', 'text_openai');
+
   return db;
 }
 

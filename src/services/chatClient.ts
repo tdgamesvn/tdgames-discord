@@ -13,6 +13,7 @@ export interface ChatCompletionParams {
 
 export interface ChatCompletionResult {
   content: string;
+  usedFallback: boolean;
 }
 
 interface ApiChatResponse {
@@ -67,13 +68,14 @@ export class ChatClient {
   async complete(params: ChatCompletionParams): Promise<ChatCompletionResult> {
     const result = await this.globalQueue.add(async () => {
       try {
-        return await this._withRetry(() => this._completeRaw(this.apiUrl, this.apiKey, params));
+        const r = await this._withRetry(() => this._completeRaw(this.apiUrl, this.apiKey, params));
+        return { ...r, usedFallback: false };
       } catch (err) {
         if (this.fallbackApiKey && this._isFallbackable(err)) {
           console.warn('[ChatClient] CLIProxy failed, falling back to OpenAI:', (err as Error).message);
-          // Use fallback model since CLIProxy models aren't available on OpenAI
           const fallbackParams = { ...params, model: this.fallbackModel };
-          return await this._completeRaw(this.fallbackApiUrl, this.fallbackApiKey, fallbackParams);
+          const r = await this._completeRaw(this.fallbackApiUrl, this.fallbackApiKey, fallbackParams);
+          return { ...r, usedFallback: true };
         }
         throw err;
       }
@@ -117,7 +119,7 @@ export class ChatClient {
     apiUrl: string,
     apiKey: string,
     params: ChatCompletionParams,
-  ): Promise<ChatCompletionResult> {
+  ): Promise<{ content: string }> {
     const response = await fetch(`${apiUrl}/v1/chat/completions`, {
       method: 'POST',
       headers: {

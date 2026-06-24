@@ -624,6 +624,19 @@ const HTML = `<!DOCTYPE html>
         <p class="field-hint">Kích thước ảnh mặc định. <strong style="color:#a78bfa">Tự động</strong> = bot phân tích prompt chọn tỉ lệ phù hợp. User có thể ghi đè bằng flag <code style="color:#a78bfa">--ratio 16:9</code>.</p>
       </div>
 
+      <!-- CHAT -->
+      <div class="section">
+        <div class="section-title">Chat</div>
+
+        <div class="field">
+          <label for="CHAT_MODEL">Model</label>
+          <div class="field-input-wrap">
+            <input type="text" id="CHAT_MODEL" name="CHAT_MODEL" placeholder="gpt-4o-mini" autocomplete="off" />
+          </div>
+        </div>
+        <p class="field-hint">Model AI dùng cho Text Channel. CLIProxy sẽ forward request tới model này. Mặc định: <strong style="color:#a78bfa">gpt-4o-mini</strong>. Thay đổi nếu muốn dùng model mạnh hơn (gpt-4o, claude-3-5-sonnet...).</p>
+      </div>
+
       <!-- SESSION -->
       <div class="section">
         <div class="section-title">Session</div>
@@ -713,6 +726,7 @@ const HTML = `<!DOCTYPE html>
       'DISCORD_TOKEN', 'DISCORD_CLIENT_ID', 'ALLOWED_CHANNEL_IDS', 'TEXT_CHANNEL_IDS', 'ERROR_CHANNEL_ID',
       'CLIPROXY_API_URL', 'CLIPROXY_API_KEY',
       'IMAGE_MODEL', 'IMAGE_SIZE',
+      'CHAT_MODEL',
       'SESSION_HISTORY_LIMIT', 'SESSION_EXPIRE_MINUTES',
       'CHANNEL_QUEUE_MAX_PENDING',
       'OPENAI_API_KEY',
@@ -927,7 +941,15 @@ const HTML = `<!DOCTYPE html>
         const res = await fetch('/api/stats');
         if (!res.ok) return;
         const { today, week } = await res.json();
-        const fmt = d => \`\${d.generates} gen · \${d.edits} edit\`;
+        const fmt = d => {
+          const imgMain = (d.generates||0) + (d.edits||0);
+          const imgFb   = d.image_openai || 0;
+          const chat    = (d.text_cliproxy||0) + (d.text_openai||0);
+          const chatFb  = d.text_openai || 0;
+          const imgStr  = imgMain + (imgFb ? \`+\${imgFb}↑\` : '') + ' ảnh';
+          const chatStr = chat + (chatFb ? \`+\${chatFb}↑\` : '') + ' chat';
+          return imgStr + ' · ' + chatStr;
+        };
         document.getElementById('stats-today').textContent = fmt(today);
         document.getElementById('stats-week').textContent  = fmt(week);
       } catch { /* silent */ }
@@ -1388,20 +1410,29 @@ app.get('/api/stats', (_req: Request, res: Response) => {
     ).get();
     if (!tableExists) {
       db.close();
-      return void res.json({ today: { generates: 0, edits: 0 }, week: { generates: 0, edits: 0 } });
+      const empty = { generates: 0, edits: 0, image_openai: 0, text_cliproxy: 0, text_openai: 0 };
+      return void res.json({ today: empty, week: empty });
     }
     const todayDate = new Date().toLocaleDateString('sv');
     const weekAgo   = new Date(Date.now() - 6 * 24 * 60 * 60 * 1000).toLocaleDateString('sv');
-    type StatRow = { generates: number; edits: number };
-    const todayRow = db.prepare('SELECT generates, edits FROM image_stats WHERE date = ?').get(todayDate) as StatRow | undefined;
-    const today = todayRow ?? { generates: 0, edits: 0 };
-    const week = db.prepare(
-      'SELECT COALESCE(SUM(generates),0) AS generates, COALESCE(SUM(edits),0) AS edits FROM image_stats WHERE date >= ?'
-    ).get(weekAgo) as StatRow;
+    type StatRow = { generates: number; edits: number; image_openai: number; text_cliproxy: number; text_openai: number };
+    const todayRow = db.prepare(
+      'SELECT generates, edits, image_openai, text_cliproxy, text_openai FROM image_stats WHERE date = ?'
+    ).get(todayDate) as StatRow | undefined;
+    const today = todayRow ?? { generates: 0, edits: 0, image_openai: 0, text_cliproxy: 0, text_openai: 0 };
+    const week = db.prepare(`
+      SELECT COALESCE(SUM(generates),0)    AS generates,
+             COALESCE(SUM(edits),0)         AS edits,
+             COALESCE(SUM(image_openai),0)  AS image_openai,
+             COALESCE(SUM(text_cliproxy),0) AS text_cliproxy,
+             COALESCE(SUM(text_openai),0)   AS text_openai
+      FROM image_stats WHERE date >= ?
+    `).get(weekAgo) as StatRow;
     db.close();
     res.json({ today, week });
   } catch {
-    res.json({ today: { generates: 0, edits: 0 }, week: { generates: 0, edits: 0 } });
+    const empty = { generates: 0, edits: 0, image_openai: 0, text_cliproxy: 0, text_openai: 0 };
+    res.json({ today: empty, week: empty });
   }
 });
 

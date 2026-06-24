@@ -22,6 +22,7 @@ export interface ImageEditParams {
 
 export interface ImageGenerationResult {
   buffer: Buffer;
+  usedFallback: boolean;
 }
 
 interface ApiResponse {
@@ -114,11 +115,13 @@ export class ImageClient {
   async generate(params: ImageGenerationParams): Promise<ImageGenerationResult> {
     const result = await this.globalQueue.add(async () => {
       try {
-        return await this._withRetry(() => this._generateRaw(this.apiUrl, this.apiKey, params));
+        const r = await this._withRetry(() => this._generateRaw(this.apiUrl, this.apiKey, params));
+        return { ...r, usedFallback: false };
       } catch (err) {
         if (this.fallbackApiKey && this._isFallbackable(err)) {
           console.warn('[ImageClient] CLIProxy failed, falling back to OpenAI:', (err as Error).message);
-          return await this._generateRaw(this.fallbackApiUrl, this.fallbackApiKey, params);
+          const r = await this._generateRaw(this.fallbackApiUrl, this.fallbackApiKey, params);
+          return { ...r, usedFallback: true };
         }
         throw err;
       }
@@ -131,11 +134,13 @@ export class ImageClient {
   async edit(params: ImageEditParams): Promise<ImageGenerationResult> {
     const result = await this.globalQueue.add(async () => {
       try {
-        return await this._withRetry(() => this._editRaw(this.apiUrl, this.apiKey, params));
+        const r = await this._withRetry(() => this._editRaw(this.apiUrl, this.apiKey, params));
+        return { ...r, usedFallback: false };
       } catch (err) {
         if (this.fallbackApiKey && this._isFallbackable(err)) {
           console.warn('[ImageClient] CLIProxy failed, falling back to OpenAI:', (err as Error).message);
-          return await this._editRaw(this.fallbackApiUrl, this.fallbackApiKey, params);
+          const r = await this._editRaw(this.fallbackApiUrl, this.fallbackApiKey, params);
+          return { ...r, usedFallback: true };
         }
         throw err;
       }
@@ -188,7 +193,7 @@ export class ImageClient {
     apiUrl: string,
     apiKey: string,
     params: ImageGenerationParams,
-  ): Promise<ImageGenerationResult> {
+  ): Promise<{ buffer: Buffer }> {
     const response = await fetch(`${apiUrl}/v1/images/generations`, {
       method: 'POST',
       headers: {
@@ -214,7 +219,7 @@ export class ImageClient {
     apiUrl: string,
     apiKey: string,
     params: ImageEditParams,
-  ): Promise<ImageGenerationResult> {
+  ): Promise<{ buffer: Buffer }> {
     const form = new FormData();
     // Append each image as image[] — gpt-image-1 supports multi-image edits
     for (const img of params.images) {
@@ -269,7 +274,7 @@ export class ImageClient {
 
   // ─── Shared response parser ─────────────────────────────────────────────────
 
-  private async _parseApiResponse(data: ApiResponse): Promise<ImageGenerationResult> {
+  private async _parseApiResponse(data: ApiResponse): Promise<{ buffer: Buffer }> {
     const item = data.data?.[0];
     if (!item) throw new Error('No image data returned from API');
 

@@ -223,8 +223,12 @@ export async function handleImageMessage(
 
     sessionStore.upsert(userId, channelId, history);
 
-    // Track usage stats
-    statsStore?.increment(isEditMode ? 'edit' : 'generate');
+    // Track usage stats (CLIProxy vs OpenAI fallback)
+    if (result.usedFallback) {
+      statsStore?.increment('image_openai');
+    } else {
+      statsStore?.increment(isEditMode ? 'edit' : 'generate');
+    }
   } catch (err) {
     const msg = err instanceof Error ? err.message : 'Unknown error';
     await thinkingMsg.edit({
