@@ -34,6 +34,7 @@ export interface Config {
   };
   chat: {
     model: string;
+    fallbackModel: string;
   };
   session: {
     historyLimit: number;
@@ -100,6 +101,7 @@ export function loadConfig(): Config {
     },
     chat: {
       model: process.env.CHAT_MODEL ?? 'gpt-4o-mini',
+      fallbackModel: process.env.CHAT_FALLBACK_MODEL ?? 'gpt-4o-mini',
     },
     session: {
       historyLimit: requireEnvInt('SESSION_HISTORY_LIMIT'),

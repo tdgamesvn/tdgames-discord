@@ -132,6 +132,9 @@ async function main(): Promise<void> {
   const chatClient = new ChatClient(
     config.cliproxy.apiUrl,
     config.cliproxy.apiKey,
+    config.openai.apiKey ?? undefined,
+    config.openai.apiUrl,
+    config.chat.fallbackModel,
     config.cliproxy.maxConcurrent,
   );
 

@@ -56,6 +56,9 @@ export class ChatClient {
   constructor(
     private readonly apiUrl: string,
     private readonly apiKey: string,
+    private readonly fallbackApiKey?: string,
+    private readonly fallbackApiUrl: string = 'https://api.openai.com',
+    private readonly fallbackModel: string = 'gpt-4o-mini',
     maxConcurrent: number = 1,
   ) {
     this.globalQueue = new PQueue({ concurrency: maxConcurrent });
@@ -63,7 +66,17 @@ export class ChatClient {
 
   async complete(params: ChatCompletionParams): Promise<ChatCompletionResult> {
     const result = await this.globalQueue.add(async () => {
-      return await this._withRetry(() => this._completeRaw(params));
+      try {
+        return await this._withRetry(() => this._completeRaw(this.apiUrl, this.apiKey, params));
+      } catch (err) {
+        if (this.fallbackApiKey && this._isFallbackable(err)) {
+          console.warn('[ChatClient] CLIProxy failed, falling back to OpenAI:', (err as Error).message);
+          // Use fallback model since CLIProxy models aren't available on OpenAI
+          const fallbackParams = { ...params, model: this.fallbackModel };
+          return await this._completeRaw(this.fallbackApiUrl, this.fallbackApiKey, fallbackParams);
+        }
+        throw err;
+      }
     });
     return result!;
   }
@@ -100,11 +113,15 @@ export class ChatClient {
 
   // ─── Raw implementation ────────────────────────────────────────────────────
 
-  private async _completeRaw(params: ChatCompletionParams): Promise<ChatCompletionResult> {
-    const response = await fetch(`${this.apiUrl}/v1/chat/completions`, {
+  private async _completeRaw(
+    apiUrl: string,
+    apiKey: string,
+    params: ChatCompletionParams,
+  ): Promise<ChatCompletionResult> {
+    const response = await fetch(`${apiUrl}/v1/chat/completions`, {
       method: 'POST',
       headers: {
-        Authorization: `Bearer ${this.apiKey}`,
+        Authorization: `Bearer ${apiKey}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
@@ -160,6 +177,15 @@ export class ChatClient {
       return match ? parseInt(match[1], 10) : null;
     }
     return null;
+  }
+
+  /** True when we should fall back to OpenAI: 5xx, 429-exhausted, or network errors. */
+  private _isFallbackable(err: unknown): boolean {
+    const status = this._extractStatus(err);
+    if (status !== null) {
+      return status === 429 || status >= 500;
+    }
+    return err instanceof Error;
   }
 }
 
