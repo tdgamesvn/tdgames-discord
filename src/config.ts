@@ -11,12 +11,15 @@ function requireEnvInt(name: string): number {
   return n;
 }
 
+function parseChannelIds(envVar: string): Set<string> {
+  const raw = process.env[envVar] ?? '';
+  return new Set(raw.split(',').map((id) => id.trim()).filter(Boolean));
+}
+
 export interface Config {
   discord: {
     token: string;
     clientId: string;
-    allowedChannelIds: Set<string>;
-    textChannelIds: Set<string>;
     errorChannelId: string | null;
   };
   cliproxy: {
@@ -28,20 +31,22 @@ export interface Config {
     apiKey: string | null;
     apiUrl: string;
   };
-  image: {
-    model: string;
-    size: string;
-  };
-  chat: {
-    model: string;
-    fallbackModel: string;
-  };
   session: {
     historyLimit: number;
     expireMinutes: number;
   };
   queue: {
     maxPending: number;
+  };
+  imageGen: {
+    channelIds: Set<string>;
+    model: string;
+    size: string;
+  };
+  textChat: {
+    channelIds: Set<string>;
+    model: string;
+    fallbackModel: string;
   };
 }
 
@@ -60,30 +65,13 @@ export function loadConfig(): Config {
       if (!(key in process.env)) process.env[key] = val;
     }
   } catch {
-    // .env not found — rely on actual env vars (production)
-  }
-
-  const rawChannels = requireEnv('ALLOWED_CHANNEL_IDS');
-  const allowedChannelIds = new Set(
-    rawChannels.split(',').map((id) => id.trim()).filter(Boolean)
-  );
-
-  const rawTextChannels = process.env.TEXT_CHANNEL_IDS ?? '';
-  const textChannelIds = new Set(
-    rawTextChannels.split(',').map((id) => id.trim()).filter(Boolean)
-  );
-
-  // Auto-add text channels to allowed channels so they pass the channel guard
-  for (const id of textChannelIds) {
-    allowedChannelIds.add(id);
+    // .env not found or test env — OK
   }
 
   return {
     discord: {
       token: requireEnv('DISCORD_TOKEN'),
       clientId: requireEnv('DISCORD_CLIENT_ID'),
-      allowedChannelIds,
-      textChannelIds,
       errorChannelId: process.env.ERROR_CHANNEL_ID?.trim() || null,
     },
     cliproxy: {
@@ -95,20 +83,22 @@ export function loadConfig(): Config {
       apiKey: process.env.OPENAI_API_KEY ?? null,
       apiUrl: process.env.OPENAI_API_URL ?? 'https://api.openai.com',
     },
-    image: {
-      model: process.env.IMAGE_MODEL ?? 'gpt-image-1',
-      size: process.env.IMAGE_SIZE ?? 'auto',
-    },
-    chat: {
-      model: process.env.CHAT_MODEL ?? 'gpt-4o-mini',
-      fallbackModel: process.env.CHAT_FALLBACK_MODEL ?? 'gpt-4o-mini',
-    },
     session: {
       historyLimit: requireEnvInt('SESSION_HISTORY_LIMIT'),
       expireMinutes: requireEnvInt('SESSION_EXPIRE_MINUTES'),
     },
     queue: {
       maxPending: requireEnvInt('CHANNEL_QUEUE_MAX_PENDING'),
+    },
+    imageGen: {
+      channelIds: parseChannelIds('IMAGE_CHANNEL_IDS'),
+      model: process.env.IMAGE_MODEL ?? 'gpt-image-1',
+      size: process.env.IMAGE_SIZE ?? 'auto',
+    },
+    textChat: {
+      channelIds: parseChannelIds('CHAT_CHANNEL_IDS'),
+      model: process.env.CHAT_MODEL ?? 'gpt-4o-mini',
+      fallbackModel: process.env.CHAT_FALLBACK_MODEL ?? 'gpt-4o-mini',
     },
   };
 }
@@ -117,9 +107,7 @@ export function loadConfig(): Config {
 let configInstance: Config | null = null;
 
 export function getConfig(): Config {
-  if (!configInstance) {
-    configInstance = loadConfig();
-  }
+  if (!configInstance) configInstance = loadConfig();
   return configInstance;
 }
 

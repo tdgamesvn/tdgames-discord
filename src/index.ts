@@ -134,7 +134,7 @@ async function main(): Promise<void> {
     config.cliproxy.apiKey,
     config.openai.apiKey ?? undefined,
     config.openai.apiUrl,
-    config.chat.fallbackModel,
+    config.textChat.fallbackModel,
     config.cliproxy.maxConcurrent,
   );
 
@@ -144,8 +144,8 @@ async function main(): Promise<void> {
   }
 
   // ─── Text channel info ─────────────────────────────────────────────────────
-  if (config.discord.textChannelIds.size > 0) {
-    console.log(`💬 Text chat enabled for ${config.discord.textChannelIds.size} channel(s) using model: ${config.chat.model}`);
+  if (config.textChat.channelIds.size > 0) {
+    console.log(`💬 Text chat enabled for ${config.textChat.channelIds.size} channel(s) using model: ${config.textChat.model}`);
   }
 
   // ─── Discord client ─────────────────────────────────────────────────────────
@@ -170,16 +170,16 @@ async function main(): Promise<void> {
   client.on(
     'messageCreate',
     createMessageHandler({
-      allowedChannelIds: config.discord.allowedChannelIds,
-      textChannelIds: config.discord.textChannelIds,
+      allowedChannelIds: config.imageGen.channelIds,
+      textChannelIds: config.textChat.channelIds,
       queueManager,
       sessionStore,
       channelPromptStore,
       imageClient,
       chatClient,
-      imageModel: config.image.model,
-      imageSize: config.image.size,
-      chatModel: config.chat.model,
+      imageModel: config.imageGen.model,
+      imageSize: config.imageGen.size,
+      chatModel: config.textChat.model,
       errorReporter,
       statsStore,
     })
