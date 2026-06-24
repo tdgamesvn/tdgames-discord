@@ -42,7 +42,10 @@ export function createMessageHandler(deps: BotDeps) {
     if (message.author.bot) return;
 
     // Channel guard — only respond in explicitly allowed channels
-    if (!deps.allowedChannelIds.has(message.channelId)) return;
+    if (!deps.allowedChannelIds.has(message.channelId)) {
+      console.log(`[bot] Ignored message in unlisted channel ${message.channelId} (user ${message.author.id})`);
+      return;
+    }
 
     // Deduplication guard — skip if this message ID was already seen
     if (isDuplicate(message.id)) {
@@ -52,6 +55,7 @@ export function createMessageHandler(deps: BotDeps) {
 
     // Route to appropriate handler based on channel type
     const isTextChannel = deps.textChannelIds.has(message.channelId);
+    console.log(`[bot] Message in ${isTextChannel ? 'text' : 'image'} channel ${message.channelId} (user ${message.author.id})`);
     const handler = isTextChannel
       ? () => handleTextChat(message, deps)
       : () => handleImageMessage(message, deps);

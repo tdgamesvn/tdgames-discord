@@ -1,9 +1,12 @@
 import { Message } from 'discord.js';
-import type { ChatClient, ChatMessage } from '../services/chatClient';
+import type { ChatClient, ChatMessage, ChatMessageContentPart } from '../services/chatClient';
 import type { SessionStore, HistoryEntry } from '../services/sessionStore';
 import type { ChannelPromptStore } from '../services/channelPromptStore';
 import type { ErrorReporter } from '../services/errorReporter';
 import type { StatsStore } from '../services/statsStore';
+
+// MIME types recognised as images for vision
+const IMAGE_MIME_RE = /^image\//i;
 
 export interface TextChatHandlerDeps {
   chatClient: ChatClient;
@@ -52,12 +55,33 @@ function splitMessage(text: string): string[] {
 }
 
 /**
+ * Build multipart content for the current user message.
+ * If no images: returns plain string.
+ * If images present: returns content-part array (text + image_url parts).
+ */
+function buildCurrentContent(
+  text: string,
+  imageUrls: string[],
+): string | ChatMessageContentPart[] {
+  if (imageUrls.length === 0) return text;
+
+  const parts: ChatMessageContentPart[] = [];
+  if (text) {
+    parts.push({ type: 'text', text });
+  }
+  for (const url of imageUrls) {
+    parts.push({ type: 'image_url', image_url: { url, detail: 'auto' } });
+  }
+  return parts;
+}
+
+/**
  * Build OpenAI-compatible messages array from session history.
  */
 function buildMessages(
   systemPrompt: string | null,
   history: HistoryEntry[],
-  currentPrompt: string,
+  currentContent: string | ChatMessageContentPart[],
 ): ChatMessage[] {
   const messages: ChatMessage[] = [];
 
@@ -66,7 +90,7 @@ function buildMessages(
     messages.push({ role: 'system', content: systemPrompt });
   }
 
-  // Conversation history
+  // Conversation history (text-only — image URLs may have expired)
   for (const entry of history) {
     if (entry.role === 'user') {
       messages.push({ role: 'user', content: entry.prompt });
@@ -76,8 +100,8 @@ function buildMessages(
     // Skip 'bot' entries (from image handler) — they don't apply here
   }
 
-  // Current user message
-  messages.push({ role: 'user', content: currentPrompt });
+  // Current user message (may include image parts)
+  messages.push({ role: 'user', content: currentContent });
 
   return messages;
 }
@@ -93,11 +117,23 @@ export async function handleTextChat(
   const channelId = message.channelId;
   const rawContent = message.content.trim();
 
-  // Ignore empty messages
-  if (!rawContent) return;
+  // Collect image attachments (Discord CDN URLs)
+  const imageUrls = [...message.attachments.values()]
+    .filter((a) => a.contentType && IMAGE_MIME_RE.test(a.contentType))
+    .map((a) => a.url);
 
-  // Handle !reset command (case-insensitive)
-  if (rawContent.toLowerCase() === '!reset') {
+  const hasImages = imageUrls.length > 0;
+
+  // Ignore empty messages with no images
+  if (!rawContent && !hasImages) return;
+
+  console.log(
+    `[TextChat] Processing from user=${userId} channel=${channelId}` +
+    ` text=${rawContent.length} images=${imageUrls.length}`,
+  );
+
+  // Handle !reset command (case-insensitive, text-only)
+  if (!hasImages && rawContent.toLowerCase() === '!reset') {
     sessionStore.delete(userId, channelId);
     await message.reply('✅ Session has been reset.');
     return;
@@ -110,8 +146,11 @@ export async function handleTextChat(
   const session = sessionStore.get(userId, channelId);
   const history: HistoryEntry[] = session ? [...session.history] : [];
 
+  // Build current message content (text + images if any)
+  const currentContent = buildCurrentContent(rawContent, imageUrls);
+
   // Build messages for chat completion
-  const messages = buildMessages(systemPrompt, history, rawContent);
+  const messages = buildMessages(systemPrompt, history, currentContent);
 
   // Show typing indicator
   try {
@@ -141,8 +180,11 @@ export async function handleTextChat(
       }
     }
 
-    // Append to session history
-    history.push({ role: 'user', prompt: rawContent });
+    // Append to session history (store text-only; image URLs expire so don't persist them)
+    const historyPrompt = hasImages
+      ? [rawContent, `[${imageUrls.length} ảnh]`].filter(Boolean).join(' ')
+      : rawContent;
+    history.push({ role: 'user', prompt: historyPrompt });
     history.push({ role: 'assistant', content: responseText } as HistoryEntry);
 
     sessionStore.upsert(userId, channelId, history);
@@ -159,6 +201,7 @@ export async function handleTextChat(
       userId,
       channelId,
       prompt: rawContent.slice(0, 200),
+      images: String(imageUrls.length),
     });
   }
 }

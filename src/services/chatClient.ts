@@ -1,8 +1,21 @@
 import PQueue from 'p-queue';
 
+// Vision content parts (OpenAI multimodal format)
+export interface ChatMessageTextPart {
+  type: 'text';
+  text: string;
+}
+
+export interface ChatMessageImagePart {
+  type: 'image_url';
+  image_url: { url: string; detail?: 'auto' | 'low' | 'high' };
+}
+
+export type ChatMessageContentPart = ChatMessageTextPart | ChatMessageImagePart;
+
 export interface ChatMessage {
   role: 'system' | 'user' | 'assistant';
-  content: string;
+  content: string | ChatMessageContentPart[];
 }
 
 export interface ChatCompletionParams {
