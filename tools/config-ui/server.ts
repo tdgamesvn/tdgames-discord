@@ -1038,6 +1038,12 @@ const HTML = `<!DOCTYPE html>
           // Update tracked ID and sync hidden ALLOWED_CHANNEL_IDS
           card.dataset.originalId = channelId;
           syncAllowedChannelIds();
+          // Persist ALLOWED_CHANNEL_IDS to .env so it survives page reload
+          await fetch('/api/config', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(collectFormData()),
+          });
           // Resolve + display name
           await resolveAndApplyNames();
           showToast('Channel saved!', 'success');
@@ -1053,6 +1059,12 @@ const HTML = `<!DOCTYPE html>
           await fetch(\`/api/channel-prompts/\${channelId}\`, { method: 'DELETE' });
           card.remove();
           syncAllowedChannelIds();
+          // Persist to .env
+          await fetch('/api/config', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(collectFormData()),
+          });
           showToast('Channel removed', 'success');
         } catch (err) {
           showToast('Error: ' + err.message, 'error');
@@ -1155,6 +1167,12 @@ const HTML = `<!DOCTYPE html>
           if (!r.ok) throw new Error((await r.json()).error);
           card.dataset.originalId = channelId;
           syncTextChannelIds();
+          // Persist TEXT_CHANNEL_IDS to .env so it survives page reload
+          await fetch('/api/config', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(collectFormData()),
+          });
           await resolveAndApplyNames();
           showToast('Text channel saved!', 'success');
         } catch (err) {
@@ -1169,6 +1187,12 @@ const HTML = `<!DOCTYPE html>
           await fetch(\`/api/channel-prompts/\${channelId}\`, { method: 'DELETE' });
           card.remove();
           syncTextChannelIds();
+          // Persist to .env
+          await fetch('/api/config', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(collectFormData()),
+          });
           showToast('Text channel removed', 'success');
         } catch (err) {
           showToast('Error: ' + err.message, 'error');
