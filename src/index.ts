@@ -4,13 +4,14 @@ import { execSync } from 'child_process';
 import { Client, GatewayIntentBits } from 'discord.js';
 import { getConfig } from './config';
 import { initDb, cleanupExpiredSessions } from './db/schema';
-import { SessionStore } from './services/sessionStore';
-import { ChannelPromptStore } from './services/channelPromptStore';
-import { QueueManager } from './services/queueManager';
-import { ImageClient } from './services/imageClient';
-import { ChatClient } from './services/chatClient';
-import { ErrorReporter } from './services/errorReporter';
-import { StatsStore } from './services/statsStore';
+import { SessionStore } from './shared/sessionStore';
+import { ChannelPromptStore } from './shared/channelPromptStore';
+import { ErrorReporter } from './shared/errorReporter';
+import { StatsStore } from './shared/statsStore';
+import { QueueManager } from './core/queue';
+import { FeatureRouter } from './core/router';
+import { createImageGenFeature } from './features/image-gen';
+import { createTextChatFeature } from './features/text-chat';
 import { createMessageHandler } from './bot';
 
 // ─── Single-instance guard ───────────────────────────────────────────────────
@@ -115,40 +116,17 @@ async function main(): Promise<void> {
   const config = getConfig();
   const db = initDb('data/bot.db');
 
+  // ─── Shared infrastructure ──────────────────────────────────────────────────
   const sessionStore = new SessionStore(
     db,
     config.session.historyLimit,
-    config.session.expireMinutes
+    config.session.expireMinutes,
   );
   const channelPromptStore = new ChannelPromptStore(db);
   const queueManager = new QueueManager(config.queue.maxPending);
-  const imageClient = new ImageClient(
-    config.cliproxy.apiUrl,
-    config.cliproxy.apiKey,
-    config.openai.apiKey ?? undefined,
-    config.openai.apiUrl,
-    config.cliproxy.maxConcurrent,
-  );
-  const chatClient = new ChatClient(
-    config.cliproxy.apiUrl,
-    config.cliproxy.apiKey,
-    config.openai.apiKey ?? undefined,
-    config.openai.apiUrl,
-    config.textChat.fallbackModel,
-    config.cliproxy.maxConcurrent,
-  );
 
-  // ─── Fallback warning ──────────────────────────────────────────────────────
-  if (!config.openai.apiKey) {
-    console.warn('⚠️  OPENAI_API_KEY not set — no fallback if CLIProxy is rate-limited or down.');
-  }
-
-  // ─── Text channel info ─────────────────────────────────────────────────────
-  if (config.textChat.channelIds.size > 0) {
-    console.log(`💬 Text chat enabled for ${config.textChat.channelIds.size} channel(s) using model: ${config.textChat.model}`);
-  }
-
-  // ─── Discord client ─────────────────────────────────────────────────────────
+  // ─── Discord client ──────────────────────────────────────────────────────────
+  // Created before errorReporter because ErrorReporter needs a Client reference.
 
   const client = new Client({
     intents: [
@@ -158,32 +136,37 @@ async function main(): Promise<void> {
     ],
   });
 
-  // ─── Error reporter ─────────────────────────────────────────────────────────
-  // Created after client so we can pass the real instance.
-  // No-op when ERROR_CHANNEL_ID is not configured.
-
   const errorReporter = new ErrorReporter(client, config.discord.errorChannelId);
   const statsStore = new StatsStore(db);
 
-  // ─── Event routing ──────────────────────────────────────────────────────────
+  // ─── FeatureContext ──────────────────────────────────────────────────────────
+  const ctx = {
+    db,
+    config,
+    errorReporter,
+    statsStore,
+    sessionStore,
+    channelPromptStore,
+  };
 
-  client.on(
-    'messageCreate',
-    createMessageHandler({
-      allowedChannelIds: config.imageGen.channelIds,
-      textChannelIds: config.textChat.channelIds,
-      queueManager,
-      sessionStore,
-      channelPromptStore,
-      imageClient,
-      chatClient,
-      imageModel: config.imageGen.model,
-      imageSize: config.imageGen.size,
-      chatModel: config.textChat.model,
-      errorReporter,
-      statsStore,
-    })
-  );
+  // ─── Feature registry ────────────────────────────────────────────────────────
+  // Each feature self-describes which channelIds it handles.
+  // To add a new feature: create src/features/<name>/index.ts → register here.
+
+  const router = new FeatureRouter();
+  router.register(createImageGenFeature(config, db));
+  router.register(createTextChatFeature(config, db));
+  // router.register(createVideoGenFeature(config, db)); // uncomment khi ready
+
+  console.log(`🚀 Router: ${router.registeredChannelIds.size} channel(s) registered`);
+
+  if (!config.openai.apiKey) {
+    console.warn('⚠️  OPENAI_API_KEY not set — no fallback if CLIProxy is rate-limited or down.');
+  }
+
+  // ─── Event routing ────────────────────────────────────────────────────────────
+
+  client.on('messageCreate', createMessageHandler(router, queueManager, ctx));
 
   client.once('ready', (c) => {
     console.log(`✅ Logged in as ${c.user.tag}`);
@@ -202,7 +185,7 @@ async function main(): Promise<void> {
     void errorReporter.report(err, { source: 'discord-client' });
   });
 
-  // ─── Global error hooks ─────────────────────────────────────────────────────
+  // ─── Global error hooks ──────────────────────────────────────────────────────
 
   process.on('uncaughtException', (err) => {
     console.error('Uncaught exception:', err);
@@ -214,7 +197,7 @@ async function main(): Promise<void> {
     void errorReporter.report(reason, { source: 'unhandledRejection' });
   });
 
-  // ─── Graceful shutdown ──────────────────────────────────────────────────────
+  // ─── Graceful shutdown ────────────────────────────────────────────────────────
   // IMPORTANT: client.destroy() sends a WebSocket close frame, but process.exit()
   // immediately after may kill the process before Discord acknowledges the close.
   // Discord then keeps the old WS session alive for ~1-2 s, causing the new
@@ -233,7 +216,7 @@ async function main(): Promise<void> {
   process.on('SIGINT', () => { void shutdown('SIGINT'); });
   process.on('SIGTERM', () => { void shutdown('SIGTERM'); });
 
-  // ─── Login ──────────────────────────────────────────────────────────────────
+  // ─── Login ───────────────────────────────────────────────────────────────────
   // Only reached after old instance has fully exited (enforceSingleInstance).
 
   await client.login(config.discord.token);
