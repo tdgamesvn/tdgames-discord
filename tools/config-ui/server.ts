@@ -771,8 +771,17 @@ const HTML = `<!DOCTYPE html>
       const errorId = (document.getElementById('ERROR_CHANNEL_ID')?.value || '').trim();
       const errorEl = document.getElementById('error-channel-name');
       if (errorEl) {
-        const name = errorId && channelNameCache[errorId];
-        errorEl.textContent = name ? '#' + name : '';
+        if (!errorId) { errorEl.textContent = ''; }
+        else {
+          const name = channelNameCache[errorId];
+          if (name) {
+            errorEl.textContent = '#' + name;
+            errorEl.style.color = '#a78bfa';
+          } else {
+            errorEl.textContent = '(bot cannot access this channel)';
+            errorEl.style.color = '#f87171';
+          }
+        }
       }
 
       // Channel cards → name label under each ID input
@@ -781,8 +790,15 @@ const HTML = `<!DOCTYPE html>
         const nameEl = card.querySelector('.channel-name-label');
         if (!idInput || !nameEl) return;
         const id = idInput.value.trim();
-        const name = id && channelNameCache[id];
-        nameEl.textContent = name ? '#' + name : '';
+        if (!id) { nameEl.textContent = ''; return; }
+        const name = channelNameCache[id];
+        if (name) {
+          nameEl.textContent = '#' + name;
+          nameEl.style.color = '#a78bfa';
+        } else {
+          nameEl.textContent = '(bot cannot access this channel)';
+          nameEl.style.color = '#f87171';
+        }
       });
     }
 
@@ -983,21 +999,22 @@ const HTML = `<!DOCTYPE html>
     function renderUnifiedChannelCard(data = { channelId: '', systemPrompt: '' }, isNew = false) {
       const card = document.createElement('div');
       card.className = 'channel-card';
+      card.dataset.originalId = data.channelId; // track for rename
       const cachedName = data.channelId && channelNameCache[data.channelId]
         ? '#' + channelNameCache[data.channelId] : '';
       card.innerHTML = \`
         <div class="channel-id-row">
           <input type="text" placeholder="Channel ID (e.g. 123456789012345678)"
-                 value="\${data.channelId}" \${isNew ? '' : 'readonly'}
+                 value="\${data.channelId}"
                  class="channel-id-input" />
-          <button class="btn btn-sm btn-danger btn-delete-channel">🗑️</button>
+          <button class="btn btn-sm btn-danger btn-delete-channel">\u{1F5D1}\u{FE0F}</button>
         </div>
         <div class="channel-name-label">\${cachedName}</div>
         <textarea class="channel-prompt-input" rows="2"
           placeholder="System prompt (optional) — vd: Game art style, anime aesthetic"
         >\${data.systemPrompt || ''}</textarea>
         <div class="card-actions">
-          <button class="btn btn-sm btn-save btn-save-channel">💾 Save</button>
+          <button class="btn btn-sm btn-save btn-save-channel">\u{1F4BE} Save</button>
         </div>
       \`;
 
@@ -1005,18 +1022,23 @@ const HTML = `<!DOCTYPE html>
         const channelId = card.querySelector('.channel-id-input').value.trim();
         const systemPrompt = card.querySelector('.channel-prompt-input').value;
         if (!channelId) { showToast('Channel ID is required', 'error'); return; }
+        const oldId = card.dataset.originalId;
         try {
-          // 1. Save system prompt to DB (even if empty — registers the channel)
+          // If ID changed, delete the old channel prompt first
+          if (oldId && oldId !== channelId) {
+            await fetch(\`/api/channel-prompts/\${oldId}\`, { method: 'DELETE' });
+          }
+          // Save system prompt to DB (even if empty — registers the channel)
           const r = await fetch('/api/channel-prompts', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ channelId, systemPrompt }),
           });
           if (!r.ok) throw new Error((await r.json()).error);
-          // 2. Lock ID and sync hidden ALLOWED_CHANNEL_IDS
-          card.querySelector('.channel-id-input').readOnly = true;
+          // Update tracked ID and sync hidden ALLOWED_CHANNEL_IDS
+          card.dataset.originalId = channelId;
           syncAllowedChannelIds();
-          // 3. Resolve + display name
+          // Resolve + display name
           await resolveAndApplyNames();
           showToast('Channel saved!', 'success');
         } catch (err) {
@@ -1096,12 +1118,13 @@ const HTML = `<!DOCTYPE html>
       const card = document.createElement('div');
       card.className = 'channel-card';
       card.style.borderColor = '#065f46';
+      card.dataset.originalId = data.channelId; // track for rename
       const cachedName = data.channelId && channelNameCache[data.channelId]
         ? '#' + channelNameCache[data.channelId] : '';
       card.innerHTML = \`
         <div class="channel-id-row">
           <input type="text" placeholder="Channel ID (e.g. 123456789012345678)"
-                 value="\${data.channelId}" \${isNew ? '' : 'readonly'}
+                 value="\${data.channelId}"
                  class="channel-id-input" />
           <button class="btn btn-sm btn-danger btn-delete-channel">\u{1F5D1}\u{FE0F}</button>
         </div>
@@ -1118,14 +1141,19 @@ const HTML = `<!DOCTYPE html>
         const channelId = card.querySelector('.channel-id-input').value.trim();
         const systemPrompt = card.querySelector('.channel-prompt-input').value;
         if (!channelId) { showToast('Channel ID is required', 'error'); return; }
+        const oldId = card.dataset.originalId;
         try {
+          // If ID changed, delete the old channel prompt first
+          if (oldId && oldId !== channelId) {
+            await fetch(\`/api/channel-prompts/\${oldId}\`, { method: 'DELETE' });
+          }
           const r = await fetch('/api/channel-prompts', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ channelId, systemPrompt }),
           });
           if (!r.ok) throw new Error((await r.json()).error);
-          card.querySelector('.channel-id-input').readOnly = true;
+          card.dataset.originalId = channelId;
           syncTextChannelIds();
           await resolveAndApplyNames();
           showToast('Text channel saved!', 'success');
@@ -1179,8 +1207,8 @@ const HTML = `<!DOCTYPE html>
         .appendChild(renderTextChannelCard({ channelId: '', systemPrompt: '' }, true));
     });
 
-    loadUnifiedChannels();
-    loadTextChannels();
+    // Sequential to avoid race condition on channel name resolution
+    loadUnifiedChannels().then(() => loadTextChannels());
   </script>
 </body>
 </html>`;
