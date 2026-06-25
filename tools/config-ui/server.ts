@@ -544,6 +544,7 @@ const HTML = `<!DOCTYPE html>
         <!-- Hidden — managed by channel cards below; included in form Save -->
         <input type="hidden" id="ALLOWED_CHANNEL_IDS" name="ALLOWED_CHANNEL_IDS" />
         <input type="hidden" id="TEXT_CHANNEL_IDS" name="TEXT_CHANNEL_IDS" />
+        <input type="hidden" id="UPSCALE_CHANNEL_IDS" name="UPSCALE_CHANNEL_IDS" />
 
         <div class="field" style="align-items: flex-start; margin-top: 4px;">
           <label style="padding-top: 8px; font-size:0.875rem; color:#b0b0c8; min-width:160px;">Image Channels</label>
@@ -637,6 +638,62 @@ const HTML = `<!DOCTYPE html>
         <p class="field-hint">Model AI dùng cho Text Channel. CLIProxy sẽ forward request tới model này. Mặc định: <strong style="color:#a78bfa">gpt-4o-mini</strong>. Thay đổi nếu muốn dùng model mạnh hơn (gpt-4o, claude-3-5-sonnet...).</p>
       </div>
 
+      <!-- UPSCALER -->
+      <div class="section">
+        <div class="section-title">Upscaler</div>
+
+        <div id="upscaler-channel-list"></div>
+        <button type="button" id="btn-add-upscaler-channel" class="btn" style="margin-bottom:16px;">+ Thêm channel</button>
+
+        <div class="field">
+          <label for="UPSCAYL_BIN_PATH">Bin Path</label>
+          <div class="field-input-wrap">
+            <input type="text" id="UPSCAYL_BIN_PATH" name="UPSCAYL_BIN_PATH"
+              placeholder="/Applications/Upscayl.app/Contents/Resources/bin/upscayl-bin"
+              autocomplete="off" />
+          </div>
+        </div>
+        <p class="field-hint">Đường dẫn tới binary <code style="color:#a78bfa">upscayl-bin</code>. Mặc định: trong <strong style="color:#a78bfa">Upscayl.app</strong>. Cài Upscayl tại <code>brew install --cask upscayl</code> nếu chưa có.</p>
+
+        <div class="field">
+          <label for="UPSCAYL_MODELS_PATH">Models Path</label>
+          <div class="field-input-wrap">
+            <input type="text" id="UPSCAYL_MODELS_PATH" name="UPSCAYL_MODELS_PATH"
+              placeholder="/Applications/Upscayl.app/Contents/Resources/models"
+              autocomplete="off" />
+          </div>
+        </div>
+        <p class="field-hint">Thư mục chứa các AI model của Upscayl. Thường nằm cùng thư mục với binary.</p>
+
+        <div class="field">
+          <label for="UPSCALE_SCALE">Scale</label>
+          <div class="field-input-wrap">
+            <select id="UPSCALE_SCALE" name="UPSCALE_SCALE">
+              <option value="2">2x — Nhanh, file nhỏ hơn</option>
+              <option value="4">4x — Mặc định, cân bằng chất lượng</option>
+              <option value="8">8x — Chậm, file rất lớn</option>
+            </select>
+          </div>
+        </div>
+        <p class="field-hint">Hệ số phóng to ảnh. <strong style="color:#a78bfa">4x</strong> là lựa chọn tốt nhất cho hầu hết trường hợp.</p>
+
+        <div class="field">
+          <label for="UPSCALE_MODEL">Model</label>
+          <div class="field-input-wrap">
+            <select id="UPSCALE_MODEL" name="UPSCALE_MODEL">
+              <option value="upscayl-standard-4x">upscayl-standard-4x — Đa năng (mặc định)</option>
+              <option value="upscayl-lite-4x">upscayl-lite-4x — Nhẹ, nhanh hơn</option>
+              <option value="high-fidelity-4x">high-fidelity-4x — Giữ chi tiết cao</option>
+              <option value="remacri-4x">remacri-4x — Ảnh thực tế</option>
+              <option value="ultramix-balanced-4x">ultramix-balanced-4x — Cân bằng</option>
+              <option value="ultrasharp-4x">ultrasharp-4x — Sắc nét</option>
+              <option value="digital-art-4x">digital-art-4x — Anime / Digital art</option>
+            </select>
+          </div>
+        </div>
+        <p class="field-hint">AI model dùng để upscale. Với game art / anime chọn <strong style="color:#a78bfa">digital-art-4x</strong>. Với ảnh chụp thực tế chọn <strong style="color:#a78bfa">remacri-4x</strong> hoặc <strong style="color:#a78bfa">high-fidelity-4x</strong>.</p>
+      </div>
+
       <!-- SESSION -->
       <div class="section">
         <div class="section-title">Session</div>
@@ -723,10 +780,12 @@ const HTML = `<!DOCTYPE html>
 
   <script>
     const KEYS = [
-      'DISCORD_TOKEN', 'DISCORD_CLIENT_ID', 'ALLOWED_CHANNEL_IDS', 'TEXT_CHANNEL_IDS', 'ERROR_CHANNEL_ID',
+      'DISCORD_TOKEN', 'DISCORD_CLIENT_ID', 'ALLOWED_CHANNEL_IDS', 'TEXT_CHANNEL_IDS',
+      'UPSCALE_CHANNEL_IDS', 'ERROR_CHANNEL_ID',
       'CLIPROXY_API_URL', 'CLIPROXY_API_KEY',
       'IMAGE_MODEL', 'IMAGE_SIZE',
       'CHAT_MODEL',
+      'UPSCAYL_BIN_PATH', 'UPSCAYL_MODELS_PATH', 'UPSCALE_SCALE', 'UPSCALE_MODEL',
       'SESSION_HISTORY_LIMIT', 'SESSION_EXPIRE_MINUTES',
       'CHANNEL_QUEUE_MAX_PENDING',
       'OPENAI_API_KEY',
@@ -1253,8 +1312,96 @@ const HTML = `<!DOCTYPE html>
         .appendChild(renderTextChannelCard({ channelId: '', systemPrompt: '' }, true));
     });
 
+    // ── Upscaler Channel Manager ───────────────────────────────────────────────
+
+    /** Rebuild UPSCALE_CHANNEL_IDS hidden input from current upscaler channel cards. */
+    function syncUpscalerChannelIds() {
+      const ids = [];
+      document.querySelectorAll('#upscaler-channel-list .channel-card').forEach(card => {
+        const id = card.querySelector('.channel-id-input')?.value.trim();
+        if (id) ids.push(id);
+      });
+      document.getElementById('UPSCALE_CHANNEL_IDS').value = ids.join(',');
+    }
+
+    function renderUpscalerChannelCard(channelId = '') {
+      const card = document.createElement('div');
+      card.className = 'channel-card';
+      card.style.borderColor = '#7c3aed';
+      const cachedName = channelId && channelNameCache[channelId]
+        ? '#' + channelNameCache[channelId] : '';
+      card.innerHTML = \`
+        <div class="channel-id-row">
+          <input type="text" placeholder="Channel ID (e.g. 123456789012345678)"
+                 value="\${channelId}"
+                 class="channel-id-input" />
+          <button class="btn btn-sm btn-danger btn-delete-channel">🗑️</button>
+        </div>
+        <div class="channel-name-label">\${cachedName}</div>
+        <div class="card-actions">
+          <button class="btn btn-sm btn-save btn-save-channel" style="background:#7c3aed;">💾 Save</button>
+        </div>
+      \`;
+
+      card.querySelector('.btn-save-channel').addEventListener('click', async () => {
+        const id = card.querySelector('.channel-id-input').value.trim();
+        if (!id) { showToast('Channel ID is required', 'error'); return; }
+        syncUpscalerChannelIds();
+        try {
+          await fetch('/api/config', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(collectFormData()),
+          });
+          await resolveAndApplyNames();
+          showToast('Upscaler channel saved!', 'success');
+        } catch (err) {
+          showToast('Error: ' + err.message, 'error');
+        }
+      });
+
+      card.querySelector('.btn-delete-channel').addEventListener('click', async () => {
+        card.remove();
+        syncUpscalerChannelIds();
+        try {
+          await fetch('/api/config', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(collectFormData()),
+          });
+          showToast('Upscaler channel removed', 'success');
+        } catch (err) {
+          showToast('Error: ' + err.message, 'error');
+        }
+      });
+
+      return card;
+    }
+
+    async function loadUpscalerChannels() {
+      try {
+        const r = await fetch('/api/config');
+        const config = await r.json();
+        const ids = (config.UPSCALE_CHANNEL_IDS || '').split(',').map(s => s.trim()).filter(Boolean);
+        const container = document.getElementById('upscaler-channel-list');
+        container.innerHTML = '';
+        for (const id of ids) {
+          container.appendChild(renderUpscalerChannelCard(id));
+        }
+        document.getElementById('UPSCALE_CHANNEL_IDS').value = ids.join(',');
+        await resolveAndApplyNames();
+      } catch (err) {
+        showToast('Failed to load upscaler channels: ' + err.message, 'error');
+      }
+    }
+
+    document.getElementById('btn-add-upscaler-channel').addEventListener('click', () => {
+      document.getElementById('upscaler-channel-list')
+        .appendChild(renderUpscalerChannelCard(''));
+    });
+
     // Sequential to avoid race condition on channel name resolution
-    loadUnifiedChannels().then(() => loadTextChannels());
+    loadUnifiedChannels().then(() => loadTextChannels()).then(() => loadUpscalerChannels());
   </script>
 </body>
 </html>`;
