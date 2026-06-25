@@ -48,6 +48,13 @@ export interface Config {
     model: string;
     fallbackModel: string;
   };
+  upscaler: {
+    channelIds: Set<string>;
+    binPath: string;
+    modelsPath: string;
+    scale: number;
+    model: string;
+  };
 }
 
 export function loadConfig(): Config {
@@ -99,6 +106,15 @@ export function loadConfig(): Config {
       channelIds: parseChannelIds('CHAT_CHANNEL_IDS'),
       model: process.env.CHAT_MODEL ?? 'gpt-4o-mini',
       fallbackModel: process.env.CHAT_FALLBACK_MODEL ?? 'gpt-4o-mini',
+    },
+    upscaler: {
+      channelIds: parseChannelIds('UPSCALE_CHANNEL_IDS'),
+      binPath: process.env.UPSCAYL_BIN_PATH
+        ?? '/Applications/Upscayl.app/Contents/Resources/bin/upscayl-bin',
+      modelsPath: process.env.UPSCAYL_MODELS_PATH
+        ?? '/Applications/Upscayl.app/Contents/Resources/models',
+      scale: parseInt(process.env.UPSCALE_SCALE ?? '4', 10) || 4,
+      model: process.env.UPSCALE_MODEL ?? 'upscayl-standard-4x',
     },
   };
 }

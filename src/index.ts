@@ -12,6 +12,7 @@ import { QueueManager } from './core/queue';
 import { FeatureRouter } from './core/router';
 import { createImageGenFeature } from './features/image-gen';
 import { createTextChatFeature } from './features/text-chat';
+import { createUpscalerFeature } from './features/upscaler';
 import { createMessageHandler } from './bot';
 
 // ─── Single-instance guard ───────────────────────────────────────────────────
@@ -156,6 +157,7 @@ async function main(): Promise<void> {
   const router = new FeatureRouter();
   router.register(createImageGenFeature(config, db));
   router.register(createTextChatFeature(config, db));
+  router.register(createUpscalerFeature(config, db));
   // router.register(createVideoGenFeature(config, db)); // uncomment khi ready
 
   console.log(`🚀 Router: ${router.registeredChannelIds.size} channel(s) registered`);
