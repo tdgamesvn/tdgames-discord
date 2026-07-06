@@ -29,8 +29,8 @@ interface ApiResponse {
   data: Array<{ url?: string; b64_json?: string }>;
 }
 
-// Fallback delays (ms) when Retry-After header is not available: 5s → 10s → 20s
-const FALLBACK_RETRY_DELAYS_MS = [5_000, 10_000, 20_000];
+// Fallback delays (ms) when Retry-After header is not available: 2s → 4s → 8s
+const FALLBACK_RETRY_DELAYS_MS = [2_000, 4_000, 8_000];
 
 // Max retry-after we'll honour from the API (2 minutes) — cap to avoid indefinite waits
 const MAX_RETRY_AFTER_MS = 120_000;
@@ -106,6 +106,8 @@ export class ImageClient {
     private readonly fallbackApiKey?: string,
     private readonly fallbackApiUrl: string = 'https://api.openai.com',
     maxConcurrent: number = 1,
+    /** Override model name when calling OpenAI directly (CLIProxy may use different names). */
+    private readonly fallbackModel?: string,
   ) {
     this.globalQueue = new PQueue({ concurrency: maxConcurrent });
   }
@@ -120,7 +122,8 @@ export class ImageClient {
       } catch (err) {
         if (this.fallbackApiKey && this._isFallbackable(err)) {
           console.warn('[ImageClient] CLIProxy failed, falling back to OpenAI:', (err as Error).message);
-          const r = await this._generateRaw(this.fallbackApiUrl, this.fallbackApiKey, params);
+          const fallbackParams = this.fallbackModel ? { ...params, model: this.fallbackModel } : params;
+          const r = await this._generateRaw(this.fallbackApiUrl, this.fallbackApiKey, fallbackParams);
           return { ...r, usedFallback: true };
         }
         throw err;
@@ -139,7 +142,8 @@ export class ImageClient {
       } catch (err) {
         if (this.fallbackApiKey && this._isFallbackable(err)) {
           console.warn('[ImageClient] CLIProxy failed, falling back to OpenAI:', (err as Error).message);
-          const r = await this._editRaw(this.fallbackApiUrl, this.fallbackApiKey, params);
+          const fallbackParams = this.fallbackModel ? { ...params, model: this.fallbackModel } : params;
+          const r = await this._editRaw(this.fallbackApiUrl, this.fallbackApiKey, fallbackParams);
           return { ...r, usedFallback: true };
         }
         throw err;

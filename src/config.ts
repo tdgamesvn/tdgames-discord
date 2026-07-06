@@ -16,6 +16,12 @@ function parseChannelIds(envVar: string): Set<string> {
   return new Set(raw.split(',').map((id) => id.trim()).filter(Boolean));
 }
 
+function parseBool(name: string, defaultValue: boolean): boolean {
+  const raw = process.env[name];
+  if (raw == null || raw.trim() === '') return defaultValue;
+  return ['1', 'true', 'yes', 'on'].includes(raw.trim().toLowerCase());
+}
+
 export interface Config {
   discord: {
     token: string;
@@ -42,6 +48,8 @@ export interface Config {
     channelIds: Set<string>;
     model: string;
     size: string;
+    /** Model override used when falling back to OpenAI directly (CLIProxy may use different model names). */
+    fallbackModel: string;
   };
   textChat: {
     channelIds: Set<string>;
@@ -54,6 +62,29 @@ export interface Config {
     modelsPath: string;
     scale: number;
     model: string;
+  };
+  upscalerVideo: {
+    channelIds: Set<string>;
+    maxDurationSec: number;
+    ffmpegPath: string;
+    ffprobePath: string;
+  };
+  compressor: {
+    channelIds: Set<string>;
+    ffmpegPath: string;
+    /** WebP lossy quality, 0-100 — higher keeps more detail at the cost of size. */
+    imageQuality: number;
+    /** libx264 CRF, 0-51 — lower means higher quality (and bigger file). */
+    videoCrf: number;
+    videoPreset: string;
+  };
+  chatStorage: {
+    enabled: boolean;
+    includeBotMessages: boolean;
+  };
+  communicationHub: {
+    ingestEnabled: boolean;
+    ingestUrl: string;
   };
 }
 
@@ -99,8 +130,9 @@ export function loadConfig(): Config {
     },
     imageGen: {
       channelIds: parseChannelIds('IMAGE_CHANNEL_IDS'),
-      model: process.env.IMAGE_MODEL ?? 'gpt-image-1',
+      model: process.env.IMAGE_MODEL ?? 'gpt-image-2',
       size: process.env.IMAGE_SIZE ?? 'auto',
+      fallbackModel: process.env.IMAGE_FALLBACK_MODEL ?? 'gpt-image-2',
     },
     textChat: {
       channelIds: parseChannelIds('CHAT_CHANNEL_IDS'),
@@ -115,6 +147,28 @@ export function loadConfig(): Config {
         ?? '/Applications/Upscayl.app/Contents/Resources/models',
       scale: parseInt(process.env.UPSCALE_SCALE ?? '4', 10) || 4,
       model: process.env.UPSCALE_MODEL ?? 'upscayl-standard-4x',
+    },
+    upscalerVideo: {
+      channelIds: parseChannelIds('UPSCALER_VIDEO_CHANNEL_IDS'),
+      maxDurationSec: parseInt(process.env.UPSCALE_VIDEO_MAX_DURATION_SEC ?? '20', 10) || 20,
+      ffmpegPath: process.env.FFMPEG_PATH ?? 'ffmpeg',
+      ffprobePath: process.env.FFPROBE_PATH ?? 'ffprobe',
+    },
+    compressor: {
+      channelIds: parseChannelIds('COMPRESSOR_CHANNEL_IDS'),
+      ffmpegPath: process.env.FFMPEG_PATH ?? 'ffmpeg',
+      imageQuality: parseInt(process.env.COMPRESS_IMAGE_QUALITY ?? '85', 10) || 85,
+      videoCrf: parseInt(process.env.COMPRESS_VIDEO_CRF ?? '23', 10) || 23,
+      videoPreset: process.env.COMPRESS_VIDEO_PRESET ?? 'medium',
+    },
+    chatStorage: {
+      enabled: parseBool('CHAT_STORAGE_ENABLED', false),
+      includeBotMessages: parseBool('CHAT_STORAGE_INCLUDE_BOTS', false),
+    },
+    communicationHub: {
+      ingestEnabled: parseBool('COMMUNICATION_HUB_INGEST_ENABLED', true),
+      ingestUrl: process.env.COMMUNICATION_HUB_INGEST_URL
+        ?? 'http://127.0.0.1:3460/api/ingest/discord/event',
     },
   };
 }

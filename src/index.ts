@@ -3,7 +3,7 @@ import * as path from 'path';
 import { execSync } from 'child_process';
 import { Client, GatewayIntentBits } from 'discord.js';
 import { getConfig } from './config';
-import { initDb, cleanupExpiredSessions } from './db/schema';
+import { initDb, cleanupExpiredSessions, cleanupProcessedMessages } from './db/schema';
 import { SessionStore } from './shared/sessionStore';
 import { ChannelPromptStore } from './shared/channelPromptStore';
 import { ErrorReporter } from './shared/errorReporter';
@@ -13,6 +13,10 @@ import { FeatureRouter } from './core/router';
 import { createImageGenFeature } from './features/image-gen';
 import { createTextChatFeature } from './features/text-chat';
 import { createUpscalerFeature } from './features/upscaler';
+import { createUpscalerVideoFeature } from './features/upscaler-video';
+import { createCompressorFeature } from './features/compressor';
+import { ChatStorageStore, registerChatStorageEvents } from './features/chat-storage/index';
+import { registerCommunicationHubForwarder } from './features/communication-hub/forwarder';
 import { createMessageHandler } from './bot';
 
 // ─── Single-instance guard ───────────────────────────────────────────────────
@@ -139,6 +143,9 @@ async function main(): Promise<void> {
 
   const errorReporter = new ErrorReporter(client, config.discord.errorChannelId);
   const statsStore = new StatsStore(db);
+  const chatStorageStore = new ChatStorageStore(db);
+  registerChatStorageEvents(client, chatStorageStore, config.chatStorage, errorReporter);
+  registerCommunicationHubForwarder(client, config.communicationHub, errorReporter);
 
   // ─── FeatureContext ──────────────────────────────────────────────────────────
   const ctx = {
@@ -158,7 +165,8 @@ async function main(): Promise<void> {
   router.register(createImageGenFeature(config, db));
   router.register(createTextChatFeature(config, db));
   router.register(createUpscalerFeature(config, db));
-  // router.register(createVideoGenFeature(config, db)); // uncomment khi ready
+  router.register(createUpscalerVideoFeature(config, db));
+  router.register(createCompressorFeature(config, db));
 
   console.log(`🚀 Router: ${router.registeredChannelIds.size} channel(s) registered`);
 
@@ -173,11 +181,15 @@ async function main(): Promise<void> {
   client.once('ready', (c) => {
     console.log(`✅ Logged in as ${c.user.tag}`);
 
-    // Periodic cleanup of expired sessions (every hour)
+    // Periodic cleanup of expired sessions + processed_messages (every hour)
     setInterval(() => {
-      const deleted = cleanupExpiredSessions(db, config.session.expireMinutes);
-      if (deleted > 0) {
-        console.log(`🧹 Cleaned up ${deleted} expired session(s)`);
+      const deletedSessions = cleanupExpiredSessions(db, config.session.expireMinutes);
+      if (deletedSessions > 0) {
+        console.log(`🧹 Cleaned up ${deletedSessions} expired session(s)`);
+      }
+      const deletedMsgs = cleanupProcessedMessages(db);
+      if (deletedMsgs > 0) {
+        console.log(`🧹 Cleaned up ${deletedMsgs} old processed_messages record(s)`);
       }
     }, 60 * 60 * 1000);
   });

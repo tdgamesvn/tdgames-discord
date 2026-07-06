@@ -112,6 +112,19 @@ function lastBotImageUrl(history: HistoryEntry[]): string | null {
   return null;
 }
 
+/**
+ * Build a context string from the last N user prompts in history.
+ * Injected into the API prompt so the model remembers what was built before.
+ * Returns null if no history yet.
+ */
+function buildHistoryContext(history: HistoryEntry[], maxTurns = 3): string | null {
+  const userPrompts = history
+    .filter((e): e is Extract<HistoryEntry, { role: 'user' }> => e.role === 'user')
+    .map(e => e.prompt)
+    .slice(-maxTurns);
+  return userPrompts.length > 0 ? userPrompts.join(' → ') : null;
+}
+
 // ─── Handler ─────────────────────────────────────────────────────────────────
 
 export function createImageGenHandler(
@@ -135,9 +148,18 @@ export function createImageGenHandler(
     // Parse --ratio flag from prompt
     const { prompt, size } = parseRatio(rawContent, imageSize);
 
-    // Get system prompt for this channel (if any)
+    // ── Fetch session early — needed for both context and image URL ────────────
+    const session = sessionStore.get(userId, channelId);
+    const sessionImageUrl = session ? lastBotImageUrl(session.history) : null;
+
+    // Build final prompt: [system prompt]. [history context →]. current prompt
     const systemPrompt = channelPromptStore.get(channelId);
-    const finalPrompt = systemPrompt ? `${systemPrompt}. ${prompt}` : prompt;
+    const historyContext = session ? buildHistoryContext(session.history) : null;
+    const parts: string[] = [];
+    if (systemPrompt) parts.push(systemPrompt);
+    if (historyContext) parts.push(`[Previous: ${historyContext}]`);
+    parts.push(prompt);
+    const finalPrompt = parts.join('. ');
 
     // ── Determine mode: edit or generate ──────────────────────────────────────
     // Priority: (1) user-uploaded attachments (all of them) → (2) last bot image in session → (3) generate new
@@ -146,9 +168,6 @@ export function createImageGenHandler(
     const imageAttachments = [...message.attachments.values()].filter(
       (a) => a.contentType?.startsWith('image/') ?? false
     );
-
-    const session = sessionStore.get(userId, channelId);
-    const sessionImageUrl = session ? lastBotImageUrl(session.history) : null;
 
     const hasUploads = imageAttachments.length > 0;
     const isEditMode = hasUploads || Boolean(sessionImageUrl);

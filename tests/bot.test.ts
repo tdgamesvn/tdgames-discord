@@ -47,7 +47,12 @@ function makeQueueManager(enqueues = true): QueueManager {
 }
 
 function makeCtx(): FeatureContext {
-  return {} as unknown as FeatureContext;
+  // bot.ts calls ctx.db.prepare() at construction time for cross-process dedup.
+  // Mock a minimal better-sqlite3 Statement: run() returns { changes: 1 } = "claimed OK".
+  const mockStatement = { run: vi.fn().mockReturnValue({ changes: 1 }) };
+  return {
+    db: { prepare: vi.fn().mockReturnValue(mockStatement) },
+  } as unknown as FeatureContext;
 }
 
 // ─── Tests ──────────────────────────────────────────────────────────────────

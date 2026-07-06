@@ -43,3 +43,6 @@ data/*.db-shm
 
 # GitNexus index
 .gitnexus/
+
+# Playwright MCP debug artifacts (page snapshots, screenshots, console logs)
+.playwright-mcp/

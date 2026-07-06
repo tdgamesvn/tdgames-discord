@@ -11,6 +11,7 @@ export function createImageGenFeature(config: Config, db: Database.Database): Fe
     config.openai.apiKey ?? undefined,
     config.openai.apiUrl,
     config.cliproxy.maxConcurrent,
+    config.imageGen.fallbackModel,
   );
   return {
     id: 'image-gen',

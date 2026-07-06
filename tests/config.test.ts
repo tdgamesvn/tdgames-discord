@@ -40,6 +40,24 @@ describe('loadConfig', () => {
     expect(cfg.queue.maxPending).toBe(5);
   });
 
+  it('parses chat storage boolean env vars', async () => {
+    process.env.CHAT_STORAGE_ENABLED = 'true';
+    process.env.CHAT_STORAGE_INCLUDE_BOTS = '1';
+    const { loadConfig } = await import('../src/config');
+    const cfg = loadConfig();
+    expect(cfg.chatStorage.enabled).toBe(true);
+    expect(cfg.chatStorage.includeBotMessages).toBe(true);
+  });
+
+  it('defaults chat storage to disabled and excludes bot messages', async () => {
+    delete process.env.CHAT_STORAGE_ENABLED;
+    delete process.env.CHAT_STORAGE_INCLUDE_BOTS;
+    const { loadConfig } = await import('../src/config');
+    const cfg = loadConfig();
+    expect(cfg.chatStorage.enabled).toBe(false);
+    expect(cfg.chatStorage.includeBotMessages).toBe(false);
+  });
+
   it('throws if DISCORD_TOKEN is missing', async () => {
     delete process.env.DISCORD_TOKEN;
     const { loadConfig } = await import('../src/config');
