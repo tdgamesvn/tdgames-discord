@@ -803,11 +803,12 @@ function renderUpscalerTab(): string {
       <div id="upscaler-channel-list"></div>
       <button type="button" id="btn-add-upscaler-channel" class="btn btn-sm" style="background:#7c3aed; color:#fff; margin-top:8px;">+ Add Channel</button>
     </div>
+    <p class="field-hint">Bot tu nhan dien user gui anh hay video de upscale tuong ung &#x2014; cung 1 channel, khong can tach rieng.</p>
 
     <hr class="divider" />
 
     <div class="section">
-      <div class="section-title">Upscayl Settings</div>
+      <div class="section-title">Upscayl Settings (Anh)</div>
 
       <div class="field">
         <label for="UPSCAYL_BIN_PATH">Bin Path</label>
@@ -854,23 +855,10 @@ function renderUpscalerTab(): string {
       <p class="field-hint">Voi game art/anime: <strong style="color:#a78bfa">digital-art-4x</strong>. Voi anh thuc: <strong style="color:#a78bfa">remacri-4x</strong>.</p>
     </div>
 
-    <div class="actions">
-      <button type="button" class="btn btn-save" id="btn-save-upscaler">&#x1F4BE; Save Upscaler</button>
-    </div>
-
     <hr class="divider" />
 
     <div class="section">
-      <div class="section-title">Upscaler Video Channels</div>
-      <input type="hidden" id="UPSCALER_VIDEO_CHANNEL_IDS" name="UPSCALER_VIDEO_CHANNEL_IDS" />
-      <div id="upscaler-video-channel-list"></div>
-      <button type="button" id="btn-add-upscaler-video-channel" class="btn btn-sm" style="background:#7c3aed; color:#fff; margin-top:8px;">+ Add Channel</button>
-    </div>
-
-    <hr class="divider" />
-
-    <div class="section">
-      <div class="section-title">Upscaler Video Settings</div>
+      <div class="section-title">Upscayl Settings (Video)</div>
 
       <div class="field">
         <label for="UPSCALE_VIDEO_MAX_DURATION_SEC">Max Duration (sec)</label>
@@ -897,7 +885,7 @@ function renderUpscalerTab(): string {
     </div>
 
     <div class="actions">
-      <button type="button" class="btn btn-save" id="btn-save-upscaler-video">&#x1F4BE; Save Upscaler Video</button>
+      <button type="button" class="btn btn-save" id="btn-save-upscaler">&#x1F4BE; Save Upscaler</button>
     </div>
 
   </div>
@@ -1620,78 +1608,16 @@ function renderClientJS(): string {
 
     document.getElementById('btn-save-upscaler').addEventListener('click', async function() {
       syncHiddenIds('upscaler-channel-list', 'UPSCALE_CHANNEL_IDS');
-      var keys = ['UPSCALE_CHANNEL_IDS', 'UPSCAYL_BIN_PATH', 'UPSCAYL_MODELS_PATH', 'UPSCALE_SCALE', 'UPSCALE_MODEL'];
+      var keys = [
+        'UPSCALE_CHANNEL_IDS', 'UPSCAYL_BIN_PATH', 'UPSCAYL_MODELS_PATH', 'UPSCALE_SCALE', 'UPSCALE_MODEL',
+        'UPSCALE_VIDEO_MAX_DURATION_SEC', 'FFMPEG_PATH', 'FFPROBE_PATH',
+      ];
       var payload = {};
       keys.forEach(function(k) { var el = document.getElementById(k); if (el) payload[k] = el.value; });
       try {
         var res = await fetch('/api/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
         if (!res.ok) throw new Error((await res.json()).error || 'Save failed');
         showToast('Upscaler saved!', 'success');
-      } catch(err) { showToast('Error: ' + err.message, 'error'); }
-    });
-
-    // ── Upscaler Video Channel Manager ─────────────────────────────────────────
-    function renderUpscalerVideoChannelCard(channelId) {
-      channelId = channelId || '';
-      var card = document.createElement('div');
-      card.className = 'channel-card';
-      card.style.borderColor = '#7c3aed';
-      card.innerHTML =
-        '<div class="channel-id-row">' +
-          '<input type="text" placeholder="Channel ID" value="' + channelId + '" class="channel-id-input" />' +
-          '<button class="btn btn-sm btn-danger btn-del-ch">&#x1F5D1;</button>' +
-        '</div>' +
-        '<div class="channel-name-label"></div>' +
-        '<div class="card-actions">' +
-          '<button class="btn btn-sm btn-save btn-save-ch" style="background:#7c3aed;">&#x1F4BE; Save</button>' +
-        '</div>';
-
-      if (channelId) {
-        resolveChannelNames([channelId]).then(function() { applyNameLabel(card); });
-      }
-
-      card.querySelector('.btn-save-ch').addEventListener('click', async function() {
-        var id = card.querySelector('.channel-id-input').value.trim();
-        if (!id) { showToast('Channel ID is required', 'error'); return; }
-        syncHiddenIds('upscaler-video-channel-list', 'UPSCALER_VIDEO_CHANNEL_IDS');
-        await resolveChannelNames([id]);
-        applyNameLabel(card);
-        showToast('Upscaler video channel saved!', 'success');
-      });
-
-      card.querySelector('.btn-del-ch').addEventListener('click', function() {
-        card.remove();
-        syncHiddenIds('upscaler-video-channel-list', 'UPSCALER_VIDEO_CHANNEL_IDS');
-        showToast('Upscaler video channel removed', 'success');
-      });
-
-      return card;
-    }
-
-    async function loadUpscalerVideoChannels() {
-      try {
-        var config = await fetch('/api/config').then(function(r) { return r.json(); });
-        var ids    = (config.UPSCALER_VIDEO_CHANNEL_IDS || '').split(',').map(function(s) { return s.trim(); }).filter(Boolean);
-        var container = document.getElementById('upscaler-video-channel-list');
-        container.innerHTML = '';
-        ids.forEach(function(id) { container.appendChild(renderUpscalerVideoChannelCard(id)); });
-        document.getElementById('UPSCALER_VIDEO_CHANNEL_IDS').value = ids.join(',');
-      } catch(err) { showToast('Failed to load upscaler video channels: ' + err.message, 'error'); }
-    }
-
-    document.getElementById('btn-add-upscaler-video-channel').addEventListener('click', function() {
-      document.getElementById('upscaler-video-channel-list').appendChild(renderUpscalerVideoChannelCard(''));
-    });
-
-    document.getElementById('btn-save-upscaler-video').addEventListener('click', async function() {
-      syncHiddenIds('upscaler-video-channel-list', 'UPSCALER_VIDEO_CHANNEL_IDS');
-      var keys = ['UPSCALER_VIDEO_CHANNEL_IDS', 'UPSCALE_VIDEO_MAX_DURATION_SEC', 'FFMPEG_PATH', 'FFPROBE_PATH'];
-      var payload = {};
-      keys.forEach(function(k) { var el = document.getElementById(k); if (el) payload[k] = el.value; });
-      try {
-        var res = await fetch('/api/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-        if (!res.ok) throw new Error((await res.json()).error || 'Save failed');
-        showToast('Upscaler Video saved!', 'success');
       } catch(err) { showToast('Error: ' + err.message, 'error'); }
     });
 
@@ -2367,7 +2293,7 @@ function renderClientJS(): string {
       'IMAGE_CHANNEL_IDS', 'IMAGE_MODEL', 'IMAGE_SIZE', 'IMAGE_FALLBACK_MODEL', 'OPENAI_API_KEY',
       'CHAT_CHANNEL_IDS', 'CHAT_MODEL', 'CHAT_FALLBACK_MODEL',
       'UPSCALE_CHANNEL_IDS', 'UPSCAYL_BIN_PATH', 'UPSCAYL_MODELS_PATH', 'UPSCALE_SCALE', 'UPSCALE_MODEL',
-      'UPSCALER_VIDEO_CHANNEL_IDS', 'UPSCALE_VIDEO_MAX_DURATION_SEC', 'FFMPEG_PATH', 'FFPROBE_PATH',
+      'UPSCALE_VIDEO_MAX_DURATION_SEC', 'FFMPEG_PATH', 'FFPROBE_PATH',
       'COMPRESSOR_CHANNEL_IDS', 'COMPRESS_IMAGE_QUALITY', 'COMPRESS_VIDEO_CRF', 'COMPRESS_VIDEO_PRESET',
       'CLIPROXY_API_URL', 'CLIPROXY_API_KEY',
       'SESSION_HISTORY_LIMIT', 'SESSION_EXPIRE_MINUTES',
@@ -2393,7 +2319,6 @@ function renderClientJS(): string {
       await loadImageChannels();
       await loadTextChannels();
       await loadUpscalerChannels();
-      await loadUpscalerVideoChannels();
       await loadCompressorChannels();
       loadLogs();
       loadIntelligence();

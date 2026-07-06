@@ -13,7 +13,6 @@ import { FeatureRouter } from './core/router';
 import { createImageGenFeature } from './features/image-gen';
 import { createTextChatFeature } from './features/text-chat';
 import { createUpscalerFeature } from './features/upscaler';
-import { createUpscalerVideoFeature } from './features/upscaler-video';
 import { createCompressorFeature } from './features/compressor';
 import { ChatStorageStore, registerChatStorageEvents } from './features/chat-storage/index';
 import { registerCommunicationHubForwarder } from './features/communication-hub/forwarder';
@@ -165,7 +164,6 @@ async function main(): Promise<void> {
   router.register(createImageGenFeature(config, db));
   router.register(createTextChatFeature(config, db));
   router.register(createUpscalerFeature(config, db));
-  router.register(createUpscalerVideoFeature(config, db));
   router.register(createCompressorFeature(config, db));
 
   console.log(`🚀 Router: ${router.registeredChannelIds.size} channel(s) registered`);

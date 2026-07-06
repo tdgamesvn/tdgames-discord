@@ -63,8 +63,8 @@ export interface Config {
     scale: number;
     model: string;
   };
+  /** Video upscale settings — shares upscaler.channelIds (same channel, auto-detected by handler). */
   upscalerVideo: {
-    channelIds: Set<string>;
     maxDurationSec: number;
     ffmpegPath: string;
     ffprobePath: string;
@@ -149,7 +149,6 @@ export function loadConfig(): Config {
       model: process.env.UPSCALE_MODEL ?? 'upscayl-standard-4x',
     },
     upscalerVideo: {
-      channelIds: parseChannelIds('UPSCALER_VIDEO_CHANNEL_IDS'),
       maxDurationSec: parseInt(process.env.UPSCALE_VIDEO_MAX_DURATION_SEC ?? '20', 10) || 20,
       ffmpegPath: process.env.FFMPEG_PATH ?? 'ffmpeg',
       ffprobePath: process.env.FFPROBE_PATH ?? 'ffprobe',

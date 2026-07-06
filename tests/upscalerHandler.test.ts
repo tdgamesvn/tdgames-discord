@@ -1,27 +1,27 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import * as fs from 'fs';
 import type { UpscalerClient } from '../src/features/upscaler/client';
+import type { VideoUpscalerClient } from '../src/features/upscaler-video/client';
 import type { FeatureContext } from '../src/core/types';
 
 vi.mock('fs');
 
-const FAKE_DOWNLOAD = Buffer.from('downloaded-image-data');
+const FAKE_DOWNLOAD = Buffer.from('downloaded-file-data');
 const FAKE_UPSCALED = Buffer.from('upscaled-image-data');
 
-/** Build a fake Discord Message. Returns the message + the thinking reply stub. */
-function makeMessage(hasImage = true) {
-  const attachment = hasImage
-    ? {
-        contentType: 'image/png',
-        url: 'https://cdn.discordapp.com/attachments/1/2/photo.png',
-        name: 'photo.png',
-      }
-    : null;
+/** Build a fake Discord Message with either an image, a video, or no media attachment. */
+function makeMessage(kind: 'image' | 'video' | 'none') {
+  const attachment =
+    kind === 'image'
+      ? { contentType: 'image/png', url: 'https://cdn.discordapp.com/a/1/photo.png', name: 'photo.png' }
+      : kind === 'video'
+        ? { contentType: 'video/mp4', url: 'https://cdn.discordapp.com/a/1/clip.mp4', name: 'clip.mp4' }
+        : null;
 
   const thinkingMsg = { edit: vi.fn().mockResolvedValue({}) };
 
   const message = {
-    attachments: { values: () => (hasImage ? [attachment] : []) },
+    attachments: { values: () => (attachment ? [attachment] : []) },
     author: { id: 'user-123' },
     channelId: 'chan-456',
     reply: vi.fn().mockResolvedValue(thinkingMsg),
@@ -49,12 +49,16 @@ function makeCtx(): FeatureContext {
   };
 }
 
-describe('createUpscalerHandler', () => {
+describe('createUpscalerHandler (auto-detect image/video, shared channel)', () => {
   beforeEach(() => {
     vi.mocked(fs.writeFileSync).mockImplementation(() => {});
     vi.mocked(fs.readFileSync).mockReturnValue(FAKE_UPSCALED);
     vi.mocked(fs.unlinkSync).mockImplementation(() => {});
     vi.unstubAllGlobals();
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      arrayBuffer: async () => FAKE_DOWNLOAD.buffer,
+    }));
   });
 
   afterEach(() => {
@@ -62,94 +66,89 @@ describe('createUpscalerHandler', () => {
     vi.unstubAllGlobals();
   });
 
-  it('does nothing when message has no image attachment', async () => {
+  it('does nothing when message has no image or video attachment', async () => {
     const { createUpscalerHandler } = await import('../src/features/upscaler/handler');
-    const client = { upscale: vi.fn() } as unknown as UpscalerClient;
-    const handler = createUpscalerHandler(client);
-    const message = makeMessage(false);
+    const imageClient = { upscale: vi.fn() } as unknown as UpscalerClient;
+    const videoClient = { upscaleVideo: vi.fn() } as unknown as VideoUpscalerClient;
+    const handler = createUpscalerHandler(imageClient, videoClient);
+    const message = makeMessage('none');
 
     await handler(message as never, makeCtx());
 
     expect(message.reply).not.toHaveBeenCalled();
-    expect(client.upscale).not.toHaveBeenCalled();
+    expect(imageClient.upscale).not.toHaveBeenCalled();
+    expect(videoClient.upscaleVideo).not.toHaveBeenCalled();
   });
 
-  it('sends ⏳ placeholder reply immediately', async () => {
+  it('routes image attachments to the image client and mentions scale/model', async () => {
     const { createUpscalerHandler } = await import('../src/features/upscaler/handler');
-    const client = { upscale: vi.fn().mockResolvedValue(undefined) } as unknown as UpscalerClient;
-    const handler = createUpscalerHandler(client);
-    const message = makeMessage(true);
-
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
-      ok: true,
-      arrayBuffer: async () => FAKE_DOWNLOAD.buffer,
-    }));
+    const imageClient = { upscale: vi.fn().mockResolvedValue(undefined) } as unknown as UpscalerClient;
+    const videoClient = { upscaleVideo: vi.fn() } as unknown as VideoUpscalerClient;
+    const handler = createUpscalerHandler(imageClient, videoClient);
+    const message = makeMessage('image');
 
     await handler(message as never, makeCtx());
 
     expect(message.reply).toHaveBeenCalledWith('⏳ Đang upscale ảnh...');
-  });
-
-  it('edits reply with ✅ and attachment on success', async () => {
-    const { createUpscalerHandler } = await import('../src/features/upscaler/handler');
-    const client = { upscale: vi.fn().mockResolvedValue(undefined) } as unknown as UpscalerClient;
-    const handler = createUpscalerHandler(client);
-    const message = makeMessage(true);
-
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
-      ok: true,
-      arrayBuffer: async () => FAKE_DOWNLOAD.buffer,
-    }));
-
-    await handler(message as never, makeCtx());
-
-    expect(message._thinking.edit).toHaveBeenCalledWith(
-      expect.objectContaining({
-        content: expect.stringContaining('✅'),
-        files: expect.any(Array),
-      }),
-    );
-    // The content should mention scale and model
+    expect(imageClient.upscale).toHaveBeenCalledTimes(1);
+    expect(videoClient.upscaleVideo).not.toHaveBeenCalled();
     const callArg = message._thinking.edit.mock.calls[0][0];
+    expect(callArg.content).toContain('✅');
     expect(callArg.content).toContain('4x');
     expect(callArg.content).toContain('upscayl-standard-4x');
   });
 
-  it('edits reply with ❌ when upscale fails', async () => {
+  it('routes video attachments to the video client', async () => {
     const { createUpscalerHandler } = await import('../src/features/upscaler/handler');
-    const client = {
-      upscale: vi.fn().mockRejectedValue(new Error('upscayl-bin exited with code 1')),
-    } as unknown as UpscalerClient;
-    const handler = createUpscalerHandler(client);
-    const message = makeMessage(true);
-
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
-      ok: true,
-      arrayBuffer: async () => FAKE_DOWNLOAD.buffer,
-    }));
+    const imageClient = { upscale: vi.fn() } as unknown as UpscalerClient;
+    const videoClient = { upscaleVideo: vi.fn().mockResolvedValue(undefined) } as unknown as VideoUpscalerClient;
+    const handler = createUpscalerHandler(imageClient, videoClient);
+    const message = makeMessage('video');
 
     await handler(message as never, makeCtx());
+
+    expect(message.reply).toHaveBeenCalledWith(expect.stringContaining('Đang upscale video'));
+    expect(videoClient.upscaleVideo).toHaveBeenCalledTimes(1);
+    expect(imageClient.upscale).not.toHaveBeenCalled();
+    const callArg = message._thinking.edit.mock.calls[0][0];
+    expect(callArg.content).toContain('✅');
+    expect(callArg.files).toEqual(expect.any(Array));
+  });
+
+  it('edits reply with ❌ and reports error when image upscale fails', async () => {
+    const { createUpscalerHandler } = await import('../src/features/upscaler/handler');
+    const err = new Error('upscayl-bin exited with code 1');
+    const imageClient = { upscale: vi.fn().mockRejectedValue(err) } as unknown as UpscalerClient;
+    const videoClient = { upscaleVideo: vi.fn() } as unknown as VideoUpscalerClient;
+    const handler = createUpscalerHandler(imageClient, videoClient);
+    const message = makeMessage('image');
+    const ctx = makeCtx();
+
+    await handler(message as never, ctx);
 
     expect(message._thinking.edit).toHaveBeenCalledWith(
       expect.objectContaining({ content: expect.stringContaining('❌') }),
     );
+    expect(ctx.errorReporter.report).toHaveBeenCalledWith(
+      err,
+      expect.objectContaining({ source: 'upscalerHandler' }),
+    );
   });
 
-  it('reports error to errorReporter on failure', async () => {
+  it('edits reply with ❌ and reports error when video upscale fails', async () => {
     const { createUpscalerHandler } = await import('../src/features/upscaler/handler');
-    const err = new Error('binary crashed');
-    const client = { upscale: vi.fn().mockRejectedValue(err) } as unknown as UpscalerClient;
-    const handler = createUpscalerHandler(client);
-    const message = makeMessage(true);
+    const err = new Error('ffmpeg crashed');
+    const imageClient = { upscale: vi.fn() } as unknown as UpscalerClient;
+    const videoClient = { upscaleVideo: vi.fn().mockRejectedValue(err) } as unknown as VideoUpscalerClient;
+    const handler = createUpscalerHandler(imageClient, videoClient);
+    const message = makeMessage('video');
     const ctx = makeCtx();
-
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
-      ok: true,
-      arrayBuffer: async () => FAKE_DOWNLOAD.buffer,
-    }));
 
     await handler(message as never, ctx);
 
+    expect(message._thinking.edit).toHaveBeenCalledWith(
+      expect.objectContaining({ content: expect.stringContaining('❌') }),
+    );
     expect(ctx.errorReporter.report).toHaveBeenCalledWith(
       err,
       expect.objectContaining({ source: 'upscalerHandler' }),
@@ -158,20 +157,13 @@ describe('createUpscalerHandler', () => {
 
   it('cleans up both temp files in finally — even on failure', async () => {
     const { createUpscalerHandler } = await import('../src/features/upscaler/handler');
-    const client = {
-      upscale: vi.fn().mockRejectedValue(new Error('crash')),
-    } as unknown as UpscalerClient;
-    const handler = createUpscalerHandler(client);
-    const message = makeMessage(true);
-
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
-      ok: true,
-      arrayBuffer: async () => FAKE_DOWNLOAD.buffer,
-    }));
+    const imageClient = { upscale: vi.fn().mockRejectedValue(new Error('crash')) } as unknown as UpscalerClient;
+    const videoClient = { upscaleVideo: vi.fn() } as unknown as VideoUpscalerClient;
+    const handler = createUpscalerHandler(imageClient, videoClient);
+    const message = makeMessage('image');
 
     await handler(message as never, makeCtx());
 
-    // unlinkSync called for input AND output paths
     expect(fs.unlinkSync).toHaveBeenCalledTimes(2);
   });
 });
